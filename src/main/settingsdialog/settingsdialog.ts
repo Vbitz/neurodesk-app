@@ -289,13 +289,13 @@ export class SettingsDialog {
             <jp-tab-panel id="tab-panel-privacy">
               <div class="setting-section">
                 <div class="row" style="line-height: 30px;">
-                  <label>Crash Reporting</label>
+                  <label>Crash and mini app reporting</label>
                 </div>
                 <div class="row">
-                  <jp-checkbox id='checkbox-telemetry' type='checkbox' <%= telemetryConsent === 'on' ? 'checked' : '' %>>Send anonymous crash reports to help improve Neurodesk</jp-checkbox>
+                  <jp-checkbox id='checkbox-telemetry' type='checkbox' <%= telemetryConsent === 'on' ? 'checked' : '' %>>Send crash reports and mini app selections to help improve Neurodesk</jp-checkbox>
                 </div>
                 <div class="row" style="opacity: 0.7; font-size: 12px; margin-top: 4px;">
-                  <label>Includes error details, OS info, and app logs. Never includes your files, passwords, or personal data.</label>
+                  <label>Includes error details, OS info, app logs, and the mini app and local or remote launch choice. Does not include a URL or image tag in app selection events.</label>
                 </div>
               </div>
 
@@ -305,7 +305,6 @@ export class SettingsDialog {
                 </div>
                 <jp-checkbox id='checkbox-clear-session-data' type='checkbox' checked="true">Browser session cache & data</jp-checkbox>
                 <jp-checkbox id='checkbox-clear-recent-remote-urls' type='checkbox'>Recent remote URLs</jp-checkbox>
-                <jp-checkbox id='checkbox-clear-recent-sessions' type='checkbox'>Recent sessions</jp-checkbox>
               
 
                 <div class="row" style="height: 60px">
@@ -315,7 +314,6 @@ export class SettingsDialog {
               <script>
                 const clearSessionDataCheckbox = document.getElementById('checkbox-clear-session-data');
                 const clearRecentRemoteURLs = document.getElementById('checkbox-clear-recent-remote-urls');
-                const clearRecentSessions = document.getElementById('checkbox-clear-recent-sessions');
                 const clearUserSetPythonEnvs = document.getElementById('checkbox-clear-user-set-python-envs');
                 const clearHistoryProgress = document.getElementById('clear-history-progress');
 
@@ -323,8 +321,7 @@ export class SettingsDialog {
                   clearHistoryProgress.style.visibility = 'visible';
                   window.electronAPI.clearHistory({
                     sessionData: clearSessionDataCheckbox.checked,
-                    recentRemoteURLs: clearRecentRemoteURLs.checked,
-                    recentSessions: clearRecentSessions.checked
+                    recentRemoteURLs: clearRecentRemoteURLs.checked
                   }).then(() => {
                     clearHistoryProgress.style.visibility = 'hidden';
                   });

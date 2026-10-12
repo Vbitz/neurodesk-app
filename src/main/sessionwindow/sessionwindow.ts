@@ -9,7 +9,6 @@ import {
   shell,
   WebContentsView
 } from 'electron';
-import * as fs from 'fs';
 import { WelcomeView } from '../welcomeview/welcomeview';
 import { LabView } from '../labview/labview';
 import {
@@ -39,6 +38,11 @@ import { SessionConfig } from '../config/sessionconfig';
 import { ISignal, Signal } from '@lumino/signaling';
 import { EventTypeMain } from '../eventtypes';
 import { EventManager } from '../eventmanager';
+import {
+  captureLocalSessionStartup,
+  captureMiniAppSelection,
+  captureRemoteSessionStarted
+} from '../telemetry';
 
 export enum ContentViewType {
   Welcome = 'welcome',
@@ -118,6 +122,9 @@ export class SessionWindow implements IDisposable {
   }
 
   private async _createServerForSession(progressView?: ProgressView) {
+    const engineType = this._wsSettings
+      .getValue(SettingType.engineType)
+      .toString();
     const serverOptions: JupyterServer.IOptions = {
       workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
       containerConfigName: this._sessionConfig.containerConfigName,
@@ -126,15 +133,22 @@ export class SessionWindow implements IDisposable {
 
     console.debug('serverOptions ', serverOptions);
 
-    const server = await this.serverFactory.createServer(
-      serverOptions,
-      progressView
-    );
-    this._server = server;
-    await server.server.started;
-    const serverInfo = server.server.info;
-    this._sessionConfig.token = serverInfo.token;
-    this._sessionConfig.url = serverInfo.url;
+    try {
+      const server = await this.serverFactory.createServer(
+        serverOptions,
+        progressView
+      );
+      this._server = server;
+      await server.server.started;
+      const serverInfo = server.server.info;
+      this._sessionConfig.token = serverInfo.token;
+      this._sessionConfig.url = serverInfo.url;
+    } catch (error) {
+      captureLocalSessionStartup(engineType, true);
+      throw error;
+    }
+
+    captureLocalSessionStartup(engineType, false);
   }
 
   load() {
@@ -220,12 +234,6 @@ export class SessionWindow implements IDisposable {
     }
   }
 
-  updateRecentSessionList(resetCollapseState: boolean) {
-    if (this._welcomeView) {
-      this._welcomeView.updateRecentSessionList(resetCollapseState);
-    }
-  }
-
   dispose(): Promise<void> {
     if (this._disposePromise) {
       return this._disposePromise;
@@ -233,10 +241,6 @@ export class SessionWindow implements IDisposable {
 
     this._disposePromise = new Promise<void>(resolve => {
       this._evm.dispose();
-      appData.recentSessionsChanged.disconnect(
-        this._recentSessionsChangedHandler,
-        this
-      );
 
       this._disposeSession().then(() => {
         // _disposeSession only closes the labView. The persistent titlebar and
@@ -404,19 +408,7 @@ export class SessionWindow implements IDisposable {
     return this._serverFactory;
   }
 
-  private _recentSessionsChangedHandler() {
-    if (this._recentSessionRemovalByThis) {
-      return;
-    }
-    this._welcomeView?.updateRecentSessionList(true);
-  }
-
   private _registerListeners() {
-    appData.recentSessionsChanged.connect(
-      this._recentSessionsChangedHandler,
-      this
-    );
-
     this._window.on('close', async () => {
       await this.dispose();
     });
@@ -473,11 +465,14 @@ export class SessionWindow implements IDisposable {
         event,
         type: 'notebook' | 'blank',
         containerConfigName?: string,
-        imageVersion?: string
+        imageVersion?: string,
+        miniAppId?: string
       ) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
+
+        captureMiniAppSelection(miniAppId, 'local');
 
         this._showProgressView(
           'Creating new session',
@@ -506,11 +501,6 @@ export class SessionWindow implements IDisposable {
 
         try {
           await this._createServerForSession(this._progressView);
-          appData.addSessionToRecents({
-            containerConfigName: this._sessionConfig.containerConfigName,
-            workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
-            filesToOpen: [...this._sessionConfig.filesToOpen]
-          });
         } catch (error) {
           this._showProgressView(
             `Failed to create session!\nCheck if ${
@@ -578,10 +568,12 @@ export class SessionWindow implements IDisposable {
 
     this._evm.registerEventHandler(
       EventTypeMain.CreateNewRemoteSession,
-      async (event, remoteUrls: string[]) => {
+      async (event, remoteUrls: string[], miniAppId?: string) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
+
+        captureMiniAppSelection(miniAppId, 'remote');
 
         this._selectRemoteServerUrl(remoteUrls);
       }
@@ -604,53 +596,6 @@ export class SessionWindow implements IDisposable {
           persistSessionData,
           undefined
         );
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.OpenRecentSession,
-      (event, sessionIndex: number) => {
-        if (event.sender !== this._welcomeView?.view?.webContents) {
-          return;
-        }
-
-        this._createSessionForRecent(sessionIndex);
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.DeleteRecentSession,
-      async (event, sessionIndex: number) => {
-        if (
-          !(
-            event.sender === this._welcomeView?.view?.webContents ||
-            event.sender === this._progressView?.view?.view?.webContents
-          )
-        ) {
-          return;
-        }
-
-        // update this window's list without resetting collapse state
-        this._recentSessionRemovalByThis = true;
-
-        await appData.removeSessionFromRecents(sessionIndex);
-
-        this._recentSessionRemovalByThis = false;
-
-        if (event.sender === this._welcomeView.view.webContents) {
-          this._welcomeView.updateRecentSessionList(false);
-        }
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.OpenRecentSessionWithDefaultEnv,
-      (event, sessionIndex: number) => {
-        if (event.sender !== this._progressView?.view?.view?.webContents) {
-          return;
-        }
-
-        this._createSessionForRecent(sessionIndex);
       }
     );
 
@@ -981,8 +926,7 @@ export class SessionWindow implements IDisposable {
 
   private async _createSessionForLocal(
     workingDirectory?: string,
-    filesToOpen?: string[],
-    recentSessionIndex?: number
+    filesToOpen?: string[]
   ) {
     const resolvedWorkingDirectory = resolveWorkingDirectory(workingDirectory);
     const sessionConfig = SessionConfig.createLocal(
@@ -1011,12 +955,6 @@ export class SessionWindow implements IDisposable {
     } else {
       this._hideProgressView();
     }
-
-    appData.addSessionToRecents({
-      containerConfigName: sessionConfig.containerConfigName,
-      workingDirectory: sessionConfig.resolvedWorkingDirectory,
-      filesToOpen: [...sessionConfig.filesToOpen]
-    });
   }
 
   private _createSessionForRemoteUrl(
@@ -1040,17 +978,16 @@ export class SessionWindow implements IDisposable {
       sessionConfig.token = token;
 
       appData.addRemoteURLToRecents(remoteURL);
-      appData.addSessionToRecents({
-        remoteURL,
-        persistSessionData,
-        partition: sessionConfig.partition
-      });
+      if (persistSessionData) {
+        appData.addPersistentRemotePartition(sessionConfig.partition);
+      }
 
       this._contentViewType = ContentViewType.Lab;
       this._updateContentView();
       this._hideProgressView();
       this._updateSessionWindowPositionConfig();
       this._sessionConfigChanged.emit();
+      captureRemoteSessionStarted(persistSessionData);
     } catch (error) {
       this._setProgress(
         'Connection Error',
@@ -1060,63 +997,6 @@ export class SessionWindow implements IDisposable {
         </div>`,
         false
       );
-    }
-  }
-
-  private _createSessionForRecent(sessionIndex: number) {
-    if (sessionIndex < 0 || sessionIndex >= appData.recentSessions.length) {
-      return;
-    }
-    const recentSession = appData.recentSessions[sessionIndex];
-
-    if (recentSession.remoteURL) {
-      this._createSessionForRemoteUrl(
-        recentSession.remoteURL,
-        recentSession.persistSessionData,
-        recentSession.partition
-      );
-    } else {
-      let workingDirectoryExists = true;
-      try {
-        const stat = fs.statSync(recentSession.workingDirectory);
-        if (!stat.isDirectory()) {
-          workingDirectoryExists = false;
-        }
-      } catch (error) {
-        workingDirectoryExists = false;
-      }
-
-      if (!workingDirectoryExists) {
-        this._showProgressView(
-          'Recent session load failed',
-          `<div class="message-row">
-          Working directory "${recentSession.workingDirectory}" does not exist anymore.
-          </div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.DeleteRecentSession}', ${sessionIndex}); sendMessageToMain('${EventTypeMain.ShowWelcomeView}');">Remove from recents</a>
-          </div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.HideProgressView}')">Go to Welcome Page</a>
-          </div>`,
-          false
-        );
-        return;
-      }
-
-      this._createSessionForLocal(
-        recentSession.workingDirectory,
-        recentSession.filesToOpen,
-        sessionIndex
-      ).catch(error => {
-        this._setProgress(
-          'Failed to create session',
-          `<div class="message-row">${error}</div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
-          </div>`,
-          false
-        );
-      });
     }
   }
 
@@ -1180,7 +1060,6 @@ export class SessionWindow implements IDisposable {
   private _disposePromise: Promise<void>;
   private _sessionConfigChanged = new Signal<this, void>(this);
   private _evm = new EventManager();
-  private _recentSessionRemovalByThis = false;
   private _engineType: EngineType;
 }
 

@@ -65,7 +65,6 @@ export interface IApplication {
 interface IClearHistoryOptions {
   sessionData: boolean;
   recentRemoteURLs: boolean;
-  recentSessions: boolean;
 }
 
 const minimumWindowSpacing = 15;
@@ -809,6 +808,9 @@ export class JupyterApplication implements IApplication, IDisposable {
       (_event, consent: TelemetryConsent) => {
         userSettings.setValue(SettingType.telemetryConsent, consent);
         userSettings.save();
+        if (consent === TelemetryConsent.On) {
+          initTelemetry();
+        }
       }
     );
 
@@ -844,23 +846,15 @@ export class JupyterApplication implements IApplication, IDisposable {
         if (options.recentRemoteURLs) {
           appData.recentRemoteURLs = [];
         }
-        if (options.sessionData || options.recentSessions) {
-          appData.recentSessions.forEach(async recentSession => {
-            if (
-              recentSession.partition &&
-              recentSession.partition.startsWith('persist:')
-            ) {
-              const s = session.fromPartition(recentSession.partition);
-              try {
-                await clearSession(s);
-              } catch (error) {
-                //
-              }
-            }
-          });
-        }
-
         if (options.sessionData) {
+          for (const partition of appData.persistentRemotePartitions) {
+            try {
+              await clearSession(session.fromPartition(partition));
+            } catch (error) {
+              //
+            }
+          }
+          appData.persistentRemotePartitions = [];
           try {
             await clearSession(session.defaultSession);
           } catch (error) {
@@ -868,14 +862,7 @@ export class JupyterApplication implements IApplication, IDisposable {
           }
         }
 
-        if (options.recentSessions) {
-          appData.recentSessions = [];
-
-          this._sessionWindowManager.windows.forEach(sessionWindow => {
-            sessionWindow.updateRecentSessionList(true);
-          });
-        }
-
+        appData.save();
         return true;
       }
     );

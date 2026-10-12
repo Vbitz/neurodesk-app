@@ -2,25 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { WebContentsView } from 'electron';
-import { DarkThemeBGColor, getUserHomeDir, LightThemeBGColor } from '../utils';
+import { DarkThemeBGColor, LightThemeBGColor } from '../utils';
 import * as path from 'path';
 import * as fs from 'fs';
-import { appData } from '../config/appdata';
 import { EventTypeRenderer } from '../eventtypes';
 import { ContainerConfig } from '../config/containerConfigParser';
 import * as yaml from 'js-yaml';
-import { SettingType, userSettings } from '../config/settings';
-import {
-  getDefaultStorageDirectory,
-  readDefaultStorageMount
-} from '../config/storageMount';
-
-interface IRecentSessionListItem {
-  isRemote: boolean;
-  linkLabel: string;
-  linkTooltip: string;
-  linkDetail?: string;
-}
 
 interface IMiniApp {
   id: string;
@@ -709,7 +696,7 @@ export class WelcomeView {
                       </div>
                   </div>\`
                 : \`<button class="launch-btn local-btn"
-                          onclick="handleNewSessionClick('notebook', '\$\{app.title\}', null)">
+                          onclick="handleNewSessionClick('notebook', '\$\{app.title\}', null, '\$\{app.id\}')">
                       Launch Local
                   </button>\`;
 
@@ -721,7 +708,7 @@ export class WelcomeView {
                       <div class="launch-buttons">
                           \$\{localButton\}
                           <button class="launch-btn remote-btn"
-                                  onclick="handleNewRemoteSessionClick('remote', '\$\{app.remoteUrl\}');location.href='javascript:void(0)'">
+                                  onclick="handleNewRemoteSessionClick('remote', '\$\{app.remoteUrl\}', '\$\{app.id\}');location.href='javascript:void(0)'">
                               Launch Remote
                           </button>
                       </div>
@@ -761,10 +748,6 @@ export class WelcomeView {
               renderApps();
           });
 
-          window.electronAPI.onSetRecentSessionList((recentSessions, resetCollapseState) => {
-            // Recent sessions handled by mini apps view
-          });
-
           document.addEventListener('dragover', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -782,8 +765,8 @@ export class WelcomeView {
             window.electronAPI.openDroppedFiles(files);
           });
 
-          function handleNewSessionClick(type, containerConfigName, imageVersion) {
-            window.electronAPI.newSession(type, containerConfigName, undefined, imageVersion || undefined);
+          function handleNewSessionClick(type, containerConfigName, imageVersion, miniAppId) {
+            window.electronAPI.newSession(type, containerConfigName, undefined, imageVersion || undefined, miniAppId);
           }
 
           async function launchLatestVersion(appId) {
@@ -799,20 +782,20 @@ export class WelcomeView {
                 dropdown.dataset.releaseUrl,
                 defaultVersion
               );
-              handleNewSessionClick('notebook', appTitle, versions[0] || defaultVersion);
+              handleNewSessionClick('notebook', appTitle, versions[0] || defaultVersion, appId);
             } catch (err) {
               console.error('Failed to load release history:', err);
-              handleNewSessionClick('notebook', appTitle, defaultVersion);
+              handleNewSessionClick('notebook', appTitle, defaultVersion, appId);
             } finally {
               button.disabled = false;
               button.textContent = 'Launch Local';
             }
           }
 
-          function handleNewRemoteSessionClick(type, remoteUrl) {
+          function handleNewRemoteSessionClick(type, remoteUrl, miniAppId) {
             // Parse the comma-separated string back to array
             const remoteUrlArray = typeof remoteUrl === 'string' ? remoteUrl.split(',') : remoteUrl;
-            window.electronAPI.newSession(type, undefined, remoteUrlArray);
+            window.electronAPI.newSession(type, undefined, remoteUrlArray, undefined, miniAppId);
           }
 
           // Close any open dropdown when clicking outside
@@ -882,7 +865,8 @@ export class WelcomeView {
             document.querySelectorAll('.version-dropdown.open').forEach(dd => {
               dd.classList.remove('open');
             });
-            handleNewSessionClick('notebook', appTitle, version);
+            const miniApp = miniApps.find(app => app.title === appTitle);
+            handleNewSessionClick('notebook', appTitle, version, miniApp?.id);
           }
 
           function handleCustomTag(event, appTitle) {
@@ -892,7 +876,8 @@ export class WelcomeView {
                 document.querySelectorAll('.version-dropdown.open').forEach(dd => {
                   dd.classList.remove('open');
                 });
-                handleNewSessionClick('notebook', appTitle, tag);
+                const miniApp = miniApps.find(app => app.title === appTitle);
+                handleNewSessionClick('notebook', appTitle, tag, miniApp?.id);
               }
             }
           }
@@ -952,8 +937,6 @@ export class WelcomeView {
         resolve();
       });
     });
-
-    this.updateRecentSessionList(true);
   }
 
   showNotification(message: string, closable: boolean) {
@@ -962,60 +945,6 @@ export class WelcomeView {
         EventTypeRenderer.SetNotificationMessage,
         message,
         closable
-      );
-    });
-  }
-
-  updateRecentSessionList(resetCollapseState: boolean) {
-    const recentSessionList: IRecentSessionListItem[] = [];
-    const home = getUserHomeDir();
-
-    for (const recentSession of appData.recentSessions) {
-      let sessionItem = '';
-      let sessionDetail = '';
-      let tooltip = '';
-      if (recentSession.remoteURL) {
-        const url = new URL(recentSession.remoteURL);
-        sessionItem = url.origin;
-        tooltip = `${recentSession.remoteURL}\nSession data ${
-          recentSession.persistSessionData ? '' : 'not '
-        }persisted`;
-        sessionDetail = '';
-      } else {
-        const customStorage = userSettings.getValue(
-          SettingType.neurodesktopStorageDirectory
-        );
-        let storageMount = '';
-        if (!customStorage) {
-          try {
-            storageMount = readDefaultStorageMount(
-              recentSession.containerConfigName || undefined
-            );
-          } catch {
-            // A recent session can refer to an installer YAML that was removed.
-            storageMount = readDefaultStorageMount();
-          }
-        }
-        const storagePath =
-          customStorage ||
-          getDefaultStorageDirectory(process.platform, storageMount, home);
-        sessionItem = storagePath;
-        tooltip = storagePath;
-      }
-
-      recentSessionList.push({
-        isRemote: !!recentSession.remoteURL,
-        linkLabel: sessionItem,
-        linkTooltip: tooltip,
-        linkDetail: sessionDetail
-      });
-    }
-
-    this._viewReady.then(() => {
-      this._view.webContents.send(
-        EventTypeRenderer.SetRecentSessionList,
-        recentSessionList,
-        resetCollapseState
       );
     });
   }

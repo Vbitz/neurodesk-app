@@ -193,3 +193,116 @@ describe('buildScrubList', () => {
     expect(list).toContain('/Users/testuser/mydata');
   });
 });
+
+describe('mini app selection telemetry', () => {
+  it('sends only the selected app and launch type when consent is on', () => {
+    const previousKey = process.env.POSTHOG_API_KEY;
+    const previousHost = process.env.POSTHOG_HOST;
+    process.env.POSTHOG_API_KEY = 'test-key';
+    process.env.POSTHOG_HOST = 'https://posthog.example';
+    const onSpy = jest.spyOn(process, 'on').mockImplementation(() => process);
+
+    try {
+      jest.isolateModules(() => {
+        const telemetry = require('../telemetry');
+        const { userSettings } = require('../config/settings');
+        const { PostHog } = require('posthog-node');
+        const getValue = userSettings.getValue as jest.Mock;
+        telemetry.initTelemetry();
+        telemetry.initTelemetry();
+
+        expect(PostHog).toHaveBeenCalledTimes(1);
+
+        const client = (PostHog as jest.Mock).mock.results.slice(-1)[0].value;
+        telemetry.captureMiniAppSelection('neurodesk', 'local');
+        expect(client.capture).toHaveBeenCalledWith({
+          distinctId: expect.any(String),
+          event: 'mini_app_selected',
+          properties: { miniAppId: 'neurodesk', launchType: 'local' }
+        });
+
+        telemetry.captureMiniAppSelection('/Users/private', 'remote');
+        expect(client.capture).toHaveBeenCalledTimes(1);
+
+        getValue.mockImplementation((key: string) =>
+          key === 'telemetryConsent' ? 'off' : ''
+        );
+        telemetry.captureMiniAppSelection('neurodesk', 'remote');
+        expect(client.capture).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      onSpy.mockRestore();
+      if (previousKey === undefined) {
+        delete process.env.POSTHOG_API_KEY;
+      } else {
+        process.env.POSTHOG_API_KEY = previousKey;
+      }
+      if (previousHost === undefined) {
+        delete process.env.POSTHOG_HOST;
+      } else {
+        process.env.POSTHOG_HOST = previousHost;
+      }
+    }
+  });
+
+  it('records OS and failed startup status for local sessions', () => {
+    const previousKey = process.env.POSTHOG_API_KEY;
+    const previousHost = process.env.POSTHOG_HOST;
+    process.env.POSTHOG_API_KEY = 'test-key';
+    process.env.POSTHOG_HOST = 'https://posthog.example';
+
+    try {
+      jest.isolateModules(() => {
+        const telemetry = require('../telemetry');
+        const { PostHog } = require('posthog-node');
+        const { userSettings } = require('../config/settings');
+        (userSettings.getValue as jest.Mock).mockImplementation((key: string) =>
+          key === 'telemetryConsent' ? 'on' : ''
+        );
+        telemetry.initTelemetry();
+        const client = (PostHog as jest.Mock).mock.results.slice(-1)[0].value;
+        client.capture.mockClear();
+
+        telemetry.captureLocalSessionStartup('docker', false);
+        telemetry.captureLocalSessionStartup('docker', true);
+
+        expect(client.capture).toHaveBeenNthCalledWith(1, {
+          distinctId: expect.any(String),
+          event: 'local_session_started',
+          properties: {
+            engineType: 'docker',
+            operatingSystem: process.platform,
+            failedSessionStartup: false
+          }
+        });
+        expect(client.capture).toHaveBeenNthCalledWith(2, {
+          distinctId: expect.any(String),
+          event: 'local_session_started',
+          properties: {
+            engineType: 'docker',
+            operatingSystem: process.platform,
+            failedSessionStartup: true
+          }
+        });
+
+        client.capture.mockImplementationOnce(() => {
+          throw new Error('PostHog unavailable');
+        });
+        expect(() =>
+          telemetry.captureLocalSessionStartup('docker', true)
+        ).not.toThrow();
+      });
+    } finally {
+      if (previousKey === undefined) {
+        delete process.env.POSTHOG_API_KEY;
+      } else {
+        process.env.POSTHOG_API_KEY = previousKey;
+      }
+      if (previousHost === undefined) {
+        delete process.env.POSTHOG_HOST;
+      } else {
+        process.env.POSTHOG_HOST = previousHost;
+      }
+    }
+  });
+});

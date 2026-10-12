@@ -71,13 +71,14 @@ export class ConsentDialog {
           <div class="consent-title">Help improve Neurodesk App</div>
         </div>
         <div class="consent-body">
-          <p>Would you like to automatically send crash reports when something goes wrong? This helps us fix bugs faster.</p>
+          <p>Would you like to send crash reports and anonymous session usage information? This helps us fix bugs and understand which apps are used.</p>
           <p><strong>What we collect:</strong></p>
           <ul>
             <li>Error details and stack traces</li>
             <li>OS, platform, and app version</li>
             <li>Container engine type (Docker/Podman/TinyRange)</li>
             <li>Last 50 lines of the app log</li>
+            <li>Selected mini app and local or remote session launches</li>
           </ul>
           <p><strong>What we never collect:</strong></p>
           <ul>
@@ -91,7 +92,7 @@ export class ConsentDialog {
         </div>
         <div class="consent-buttons">
           <jp-button onclick="handleDecline()">No thanks</jp-button>
-          <jp-button appearance="accent" onclick="handleAccept()">Yes, send crash reports</jp-button>
+          <jp-button appearance="accent" onclick="handleAccept()">Yes, send reports</jp-button>
         </div>
       </div>
       <script>

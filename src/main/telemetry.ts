@@ -14,8 +14,8 @@ export interface ICrashReport {
   [key: string]: string | undefined;
 }
 
-const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY || '';
-const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://app.posthog.com';
+const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
+const POSTHOG_HOST = process.env.POSTHOG_HOST;
 const LOG_TAIL_LINES = 50;
 
 let posthogClient: any = null;
@@ -43,24 +43,31 @@ export function initTelemetry(): void {
     return;
   }
 
-  if (!POSTHOG_API_KEY) {
+  if (!POSTHOG_API_KEY || !POSTHOG_HOST) {
+    if (process.env.NODE_ENV === 'development') {
+      if (!POSTHOG_API_KEY) {
+        console.error(
+          'POSTHOG_API_KEY variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once POSTHOG_API_KEY is configured'
+        );
+      }
+      if (!POSTHOG_HOST) {
+        console.error(
+          'POSTHOG_HOST variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once POSTHOG_HOST is configured'
+        );
+      }
+    }
+    return;
+  }
+
+  if (posthogClient) {
     return;
   }
 
   distinctId = generateDistinctId();
 
   posthogClient = new PostHog(POSTHOG_API_KEY, {
-    host: POSTHOG_HOST
-  });
-
-  // Capture uncaught exceptions and unhandled rejections
-  process.on('uncaughtException', (error: Error) => {
-    captureException(error);
-  });
-
-  process.on('unhandledRejection', (reason: any) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    captureException(error);
+    host: POSTHOG_HOST,
+    enableExceptionAutocapture: true
   });
 }
 
@@ -68,7 +75,10 @@ export function initTelemetry(): void {
  * Capture an exception and send it to PostHog.
  */
 export function captureException(error: Error): void {
-  if (!posthogClient) {
+  if (
+    !posthogClient ||
+    userSettings.getValue(SettingType.telemetryConsent) !== TelemetryConsent.On
+  ) {
     return;
   }
 
@@ -97,6 +107,71 @@ export function captureException(error: Error): void {
     distinctId,
     event: '$exception',
     properties: sanitized
+  });
+}
+
+/** Record a mini app chosen from the welcome screen without sending a URL or image tag. */
+export function captureMiniAppSelection(
+  miniAppId: string | undefined,
+  launchType: 'local' | 'remote'
+): void {
+  if (
+    !posthogClient ||
+    userSettings.getValue(SettingType.telemetryConsent) !==
+      TelemetryConsent.On ||
+    !miniAppId ||
+    !/^[a-z0-9-]{1,64}$/.test(miniAppId)
+  ) {
+    return;
+  }
+
+  posthogClient.capture({
+    distinctId,
+    event: 'mini_app_selected',
+    properties: { miniAppId, launchType }
+  });
+}
+
+/** Record the outcome of a local startup without file, path, or error details. */
+export function captureLocalSessionStartup(
+  engineType: string,
+  failedSessionStartup: boolean
+): void {
+  if (
+    !posthogClient ||
+    userSettings.getValue(SettingType.telemetryConsent) !== TelemetryConsent.On
+  ) {
+    return;
+  }
+
+  try {
+    posthogClient.capture({
+      distinctId,
+      event: 'local_session_started',
+      properties: {
+        engineType,
+        operatingSystem: process.platform,
+        failedSessionStartup
+      }
+    });
+  } catch {
+    // A telemetry failure must not interrupt local session startup.
+  }
+}
+
+/** Record a remote session opening without its URL or token. */
+export function captureRemoteSessionStarted(persistSessionData: boolean): void {
+  if (
+    !posthogClient ||
+    userSettings.getValue(SettingType.telemetryConsent) !== TelemetryConsent.On
+  ) {
+    return;
+  }
+
+  posthogClient.capture({
+    distinctId,
+    event: 'remote_session_started',
+    properties: { persistSessionData }
   });
 }
 
