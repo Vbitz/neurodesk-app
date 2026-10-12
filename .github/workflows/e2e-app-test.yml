@@ -161,10 +161,13 @@ jobs:
         run: |
           echo "Using dist/win-unpacked/ directly (no installer needed)"
 
-      - name: Install websocket client
-        if: matrix.cfg.engine == 'tinyrange'
+      - name: Install E2E Python dependencies
         run: |
-          python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
+          if [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+            python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
+          else
+            python3 -m pip install --upgrade --user websocket-client requests
+          fi
 
       - name: Setup Podman for rootless CI
         if: matrix.cfg.engine == 'podman'
@@ -196,13 +199,29 @@ jobs:
             SETTINGS_DIR="$APPDATA/neurodeskapp"
           fi
 
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
+            WORKING_DIR="$TEMP/neurodesk-test"
+          else
+            WORKING_DIR="/tmp/neurodesk-test"
+          fi
+
           mkdir -p "$SETTINGS_DIR"
-          printf '%s\n' '{' \
-            '  "startupMode": "new-local-session",' \
-            '  "engineType": "${{ matrix.cfg.engine }}",' \
-            '  "logLevel": "debug",' \
-            '  "checkForUpdatesAutomatically": false' \
-            '}' > "$SETTINGS_DIR/settings.json"
+          SETTINGS_DIR="$SETTINGS_DIR" WORKING_DIR="$WORKING_DIR" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          settings = {
+              "startupMode": "welcome-page",
+              "defaultWorkingDirectory": os.environ["WORKING_DIR"],
+              "engineType": "${{ matrix.cfg.engine }}",
+              "logLevel": "debug",
+              "telemetryConsent": "off",
+              "checkForUpdatesAutomatically": False,
+          }
+          path = Path(os.environ["SETTINGS_DIR"]) / "settings.json"
+          path.write_text(json.dumps(settings, indent=2))
+          PY
 
           echo "=== Settings ==="
           cat "$SETTINGS_DIR/settings.json"
@@ -210,11 +229,7 @@ jobs:
           # Create storage and working directories
           mkdir -p ~/neurodesktop-storage
           chmod 777 ~/neurodesktop-storage
-          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
-            mkdir -p "$TEMP/neurodesk-test"
-          else
-            mkdir -p /tmp/neurodesk-test
-          fi
+          mkdir -p "$WORKING_DIR"
 
       # Join the background pre-pull before launching, so the app never races a
       # half-finished pull. Never fails the job: if the image is not local, the
@@ -273,15 +288,17 @@ jobs:
             exit 1
           fi
 
-          # Launch with stdout/stderr captured for diagnostics
+          # Launch the welcome page with DevTools available for app selection.
+          # --working-dir is intentionally omitted: it bypasses the welcome
+          # page and creates a local session without a container config.
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             xvfb-run --auto-servernum "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           else
             "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           fi
@@ -299,6 +316,9 @@ jobs:
           echo "working_dir=$WORKING_DIR" >> "$GITHUB_OUTPUT"
           echo "app_log=$APP_LOG" >> "$GITHUB_OUTPUT"
           echo "Launched app with PID $APP_PID, engine=${{ matrix.cfg.engine }}, working dir: $WORKING_DIR"
+
+      - name: 'Select Neurodesk mini app for local launch'
+        run: python3 scripts/select_e2e_mini_app.py neurodesk --port 9222
 
       # ───────────────────────────────────────────────
       # App orchestration tests
@@ -435,7 +455,7 @@ jobs:
             exit 1
           fi
 
-          # Verify /data mount (from --working-dir)
+          # Verify /data mount (from the configured default working directory)
           if $ENGINE inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' | grep -q '/data'; then
             echo "PASS: /data mount present (working dir)"
           else
