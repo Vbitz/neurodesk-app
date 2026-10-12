@@ -214,6 +214,7 @@ jobs:
           settings = {
               "startupMode": "welcome-page",
               "defaultWorkingDirectory": os.environ["WORKING_DIR"],
+              "serverArgs": os.environ["WORKING_DIR"],
               "engineType": "${{ matrix.cfg.engine }}",
               "logLevel": "debug",
               "telemetryConsent": "off",
