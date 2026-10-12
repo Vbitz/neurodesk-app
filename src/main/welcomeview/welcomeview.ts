@@ -100,6 +100,10 @@ export class WelcomeView {
       path.join(__dirname, '../../../app-assets/neurodesk.svg')
     );
 
+    const scigetLogo = fs.readFileSync(
+      path.join(__dirname, '../../../app-assets/sciget-icon.svg')
+    );
+
     // Load mini apps from container installer YAML files
     const dynamicMiniApps = loadMiniAppsFromContainerInstaller();
     const miniAppsJson = JSON.stringify(dynamicMiniApps, null, 2);
@@ -122,7 +126,8 @@ export class WelcomeView {
               background: ${LightThemeBGColor};
               color: #000000;
               margin: 0;
-              overflow: hidden;
+              overflow-x: hidden;
+              overflow-y: auto;
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica,
                 Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
                 'Segoe UI Symbol';
@@ -236,6 +241,49 @@ export class WelcomeView {
 
           .neurodesk-logo .jp-icon2 {
             fill: #888888;
+          }
+
+          .announcement-card {
+            border-top: 4px solid #6aa329;
+          }
+
+          .app-ui-dark .announcement-card {
+            border-top-color: #b7d886;
+          }
+
+          .announcement-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+
+          .sciget-logo {
+            flex: 0 0 50px;
+          }
+
+          .sciget-logo svg {
+            display: block;
+            width: 50px;
+            height: 50px;
+          }
+
+          .announcement-heading .app-title {
+            margin-bottom: 0;
+          }
+
+          .announcement-label {
+            display: inline-block;
+            margin-bottom: 4px;
+            color: #4f7d23;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+
+          .app-ui-dark .announcement-label {
+            color: #c8e6a6;
           }
 
           .launch-buttons {
@@ -719,8 +767,11 @@ export class WelcomeView {
           // Function to render all apps (updated to handle filtering)
           function renderApps(filteredApps = miniApps) {
               const appsGrid = document.getElementById('appsGrid');
+              const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
+              const announcementText = 'coming next sciget next version neurodesk app scientific work';
+              const showAnnouncement = !searchTerm || announcementText.includes(searchTerm);
 
-              if (filteredApps.length === 0) {
+              if (filteredApps.length === 0 && !showAnnouncement) {
                   appsGrid.innerHTML = \`
                       <div style="grid-column: 1 / -1; text-align: center; padding: 40px;">
                           <h3 style="margin-bottom: 8px;">No apps found</h3>
@@ -730,7 +781,19 @@ export class WelcomeView {
                   return;
               }
 
-              const appsHTML = filteredApps.map(createAppCard).join('');
+              const announcementHTML = showAnnouncement
+                ? \`<aside class="app-card announcement-card" aria-labelledby="sciget-announcement-title">
+                     <div class="announcement-header">
+                       <div class="sciget-logo" aria-hidden="true">${scigetLogo}</div>
+                       <div class="announcement-heading">
+                         <span class="announcement-label">Coming next</span>
+                         <h3 class="app-title" id="sciget-announcement-title">SciGet</h3>
+                       </div>
+                     </div>
+                     <p class="app-description">The next version of Neurodesk App will be called SciGet, with a broader selection for scientific domains.</p>
+                   </aside>\`
+                : '';
+              const appsHTML = filteredApps.map(createAppCard).join('') + announcementHTML;
 
               appsGrid.innerHTML = appsHTML;
           }
