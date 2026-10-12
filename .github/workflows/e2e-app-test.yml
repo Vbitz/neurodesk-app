@@ -50,15 +50,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # Warm the local image store while the app downloads/installs.
+      # Warm the local image store with the configured fallback version while
+      # the app downloads/installs. The app may select a newer fetched release.
       #
       # server.ts:486 runs `<engine> image inspect <image>` and skips its own pull
-      # when the image is already present. So pre-pulling here does two things:
+      # when the selected image is already present. So pre-pulling can:
       #   1. Overlaps the ~2.5 GB fetch with artifact download + apt + dpkg install
       #      instead of paying it serially inside the launch script.
-      #   2. Takes the launch script's `timeout 300` pull (server.ts:497) off the
-      #      critical path. That timeout currently turns a slow Docker Hub day into
-      #      a hard run failure rather than a slow run.
+      #   2. Take the launch script's `timeout 300` pull (server.ts:497) off the
+      #      critical path when the fallback version is selected.
       #
       # Best-effort by design: if this fails or times out, the app pulls as before.
       - name: Start container image pre-pull (background)
@@ -67,15 +67,14 @@ jobs:
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
 
-          TAG=$(grep -E '^[[:space:]]*jupyter_neurodesk_version' neurodesktop.toml \
+          TAG=$(grep -E '^[[:space:]]*defaultVersion:' container_installer/neurodesk.yml \
                 | head -1 | cut -d'"' -f2)
           if [ -z "$TAG" ]; then
-            echo "FAIL: could not read jupyter_neurodesk_version from neurodesktop.toml"
+            echo "FAIL: could not read defaultVersion from container_installer/neurodesk.yml"
             exit 1
           fi
 
-          # Must match server.ts:165 (`vnmd/neurodesktop:${tag}`) exactly, or the
-          # app's image-inspect check misses and it pulls again anyway.
+          # Match server.ts:165 (`vnmd/neurodesktop:${tag}`) for this version.
           SHORT_IMAGE="vnmd/neurodesktop:${TAG}"
           PULL_IMAGE="docker.io/${SHORT_IMAGE}"
           LOG="/tmp/prepull.log"
