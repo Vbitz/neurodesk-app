@@ -295,14 +295,18 @@ describe('generateLaunchScript', () => {
   // ── Podman tests ──
 
   describe('Podman engine', () => {
-    it('uses podman run command', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.Podman
-        })
-      );
-      expect(script).toContain('podman run -d --rm');
-    });
+    it.each(['linux', 'darwin', 'win32'])(
+      'uses podman run with cgroups disabled on %s',
+      platform => {
+        const script = generateLaunchScript(
+          baseParams({
+            engineType: EngineType.Podman,
+            platform
+          })
+        );
+        expect(script).toContain('podman run --cgroups=disabled -d --rm');
+      }
+    );
 
     it('uses -v for home volume (not --mount)', () => {
       const script = generateLaunchScript(

@@ -103,6 +103,7 @@ describe('launch script invariants', () => {
       ' --network ',
       ' --privileged',
       ' --shm-size',
+      ' --cgroups=',
       ' --user=',
       ' --mac-address',
       ' --security-opt'
@@ -129,7 +130,13 @@ describe('launch script invariants', () => {
 
       const runLines = script
         .split('\n')
-        .filter(line => line.includes(`${engineType} run -d --rm`));
+        .filter(line =>
+          line.includes(
+            engineType === EngineType.Podman
+              ? 'podman run --cgroups=disabled -d --rm'
+              : 'docker run -d --rm'
+          )
+        );
       expect(runLines.length).toBeGreaterThan(0);
 
       for (const line of runLines) {

@@ -208,8 +208,8 @@ describe('ContainerConfigParser', () => {
       joined = args.join(' ');
     });
 
-    it('uses podman run -d --rm', () => {
-      expect(joined).toContain('podman run -d --rm');
+    it('disables cgroups in the Podman run command', () => {
+      expect(joined).toContain('podman run --cgroups=disabled -d --rm');
     });
 
     it('uses -v for home volume (not --mount)', () => {
@@ -225,6 +225,17 @@ describe('ContainerConfigParser', () => {
     it('includes --add-host and OLLAMA_HOST', () => {
       expect(joined).toContain('--add-host=host.docker.internal:');
       expect(joined).toContain('OLLAMA_HOST=');
+    });
+  });
+
+  describe('Podman windows', () => {
+    it('disables cgroups in the Podman run command', () => {
+      const args = parser.parseArgs(
+        EngineType.Podman,
+        makeContext({ storageDir: 'C://neurodesktop-storage' }),
+        'windows'
+      );
+      expect(args.join(' ')).toContain('podman run --cgroups=disabled -d --rm');
     });
   });
 
@@ -421,7 +432,7 @@ describe('ContainerConfigParser', () => {
         .join(' ');
 
       const requiredFlags = [
-        'podman run -d --rm',
+        'podman run --cgroups=disabled -d --rm',
         '--shm-size=1gb',
         '--privileged',
         '--user=root',
