@@ -100,7 +100,7 @@ def _make_msg(msg_type, content, session):
     }
 
 
-def run(url, token, code, timeout=1800, quiet_on_success=False):
+def run(url, token, code, timeout=3600, quiet_on_success=False):
     headers = {'Authorization': f'token {token}'}
 
     for attempt in range(3):
