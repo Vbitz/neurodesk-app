@@ -234,13 +234,12 @@ export class WelcomeView {
             width: 300px;
           }
 
-          .app-ui-dark .neurodesk-logo {
-            width: 300px;
-            fill: #888888
+          .neurodesk-logo {
+            color: #0c0e0a;
           }
 
-          .neurodesk-logo .jp-icon2 {
-            fill: #888888;
+          .app-ui-dark .neurodesk-logo {
+            color: #ffffff;
           }
 
           .announcement-card {
@@ -617,8 +616,19 @@ export class WelcomeView {
             .app-ui-dark #survey-reminder-close:hover {
               fill: #e2e8f0;
             }
+            .scroll-box {
+              max-height: 150px;
+              overflow-y: auto;
+              margin-bottom: 12px;
+            }
             #survey-reminder-desc {
-              font-size: 0.82rem;
+              font-size: 0.72rem;
+              color: #718096;
+              margin-bottom: 12px;
+              line-height: 1.4;
+            }
+            #survey-reminder-desc-small {
+              font-size: 0.62rem;
               color: #718096;
               margin-bottom: 12px;
               line-height: 1.4;
@@ -692,13 +702,16 @@ export class WelcomeView {
 
           <div id="survey-reminder">
             <div id="survey-reminder-header">
-              <span id="survey-reminder-title">Help us improve Neurodesk</span>
+              <span id="survey-reminder-title">Help us understand user needs</span>
               <svg id="survey-reminder-close" onclick="this.parentElement.parentElement.style.display = 'none';" viewBox="0 0 512 512" title="Dismiss">
                 <use href="#circle-xmark" />
               </svg>
             </div>
-            <p id="survey-reminder-desc">Share your feedback in a quick survey.</p>
-            <button id="survey-reminder-btn" onclick="openSurveyLink()">Take Survey</button>
+            <div class="scroll-box">
+            <p id="survey-reminder-desc">The Neurodesk team is conducting a voluntary online survey lasting approximately 15 minutes, or up to 25 minutes if you use more than one of the platforms, about experiences with Neurodesk, NeurodeskEDU and/or Sciget, priorities for future features, and views about possible future collection of platform usage data.</p>
+            <p id="survey-reminder-desc-small">The research survey does not collect usage logs. Most questions use rating scales or multiple-choice responses. No compensation is offered, and taking part will not affect your access or support. Read the study information and decide whether to participate in the survey.</p>
+            </div>
+            <button id="survey-reminder-btn" onclick="openSurveyLink()">Participate</button>
           </div>
 
           <script>
@@ -966,7 +979,7 @@ export class WelcomeView {
           // Survey reminder: visible Oct 1 – Dec 1, 2026 (two-month window)
           const SURVEY_URL = 'https://uniofqueensland.au1.qualtrics.com/jfe/form/SV_1MvJiHaCQZ4I0Tk';
           const SURVEY_START = new Date('2026-10-01');
-          const SURVEY_END = new Date('2026-12-01');
+          const SURVEY_END = new Date('2027-03-15');
 
           function initSurveyReminder() {
             const now = new Date();
