@@ -17,7 +17,7 @@ commonLaunchArgs:
 # --oci instead, so it must not get a trailing image name.
 engines:
   podman: &podman_base
-    base_cmd: 'podman run -d --rm'
+    base_cmd: 'podman run --cgroups=disabled -d --rm'
     trailingImage: true
 
   docker: &docker_base
