@@ -2,6 +2,7 @@
 jest.mock('posthog-node', () => ({
   PostHog: jest.fn().mockImplementation(() => ({
     capture: jest.fn(),
+    on: jest.fn(),
     shutdown: jest.fn().mockResolvedValue(undefined)
   }))
 }));
@@ -26,7 +27,8 @@ jest.mock('electron', () => ({
     isPackaged: false,
     getAppPath: () => '/test/app'
   },
-  nativeTheme: { shouldUseDarkColors: false }
+  nativeTheme: { shouldUseDarkColors: false },
+  net: { fetch: jest.fn() }
 }));
 
 jest.mock('electron-log', () => ({
@@ -217,16 +219,151 @@ describe('mini app selection telemetry', () => {
       jest.isolateModules(() => {
         const telemetry = require('../telemetry');
         const { PostHog } = require('posthog-node');
+        const log = require('electron-log').default;
         telemetry.initTelemetry();
         expect(PostHog).toHaveBeenCalledWith('packaged-test-key', {
           host: 'https://posthog.example',
-          enableExceptionAutocapture: true
+          enableExceptionAutocapture: true,
+          fetch: expect.any(Function)
         });
+        expect(log.info).toHaveBeenCalledWith('Telemetry configuration', {
+          apiKey: 'configured',
+          apiKeySource: 'package',
+          host: 'configured',
+          hostSource: 'package',
+          hostOrigin: 'https://posthog.example'
+        });
+        expect(JSON.stringify(log.info.mock.calls)).not.toContain(
+          'packaged-test-key'
+        );
+
+        const client = (PostHog as jest.Mock).mock.results.slice(-1)[0].value;
+        const listener = (name: string) =>
+          client.on.mock.calls.find(([event]: [string]) => event === name)[1];
+        listener('capture')({
+          event: 'mini_app_selected',
+          properties: { token: 'private-value' }
+        });
+        listener('flush')([{ properties: { token: 'private-value' } }]);
+        listener('error')({
+          name: 'PostHogFetchHttpError',
+          status: 401,
+          message: 'private-value'
+        });
+        listener('error')({
+          name: 'PostHogFetchNetworkError',
+          error: {
+            cause: { code: 'ENOTFOUND', message: 'private-value' }
+          }
+        });
+        expect(log.info).toHaveBeenCalledWith('Telemetry event queued', {
+          event: 'mini_app_selected'
+        });
+        expect(log.info).toHaveBeenCalledWith('Telemetry batch delivered', {
+          count: 1
+        });
+        expect(log.warn).toHaveBeenCalledWith('Telemetry delivery failed', {
+          name: 'PostHogFetchHttpError',
+          status: 401,
+          code: undefined
+        });
+        expect(log.warn).toHaveBeenCalledWith('Telemetry delivery failed', {
+          name: 'PostHogFetchNetworkError',
+          status: undefined,
+          code: 'ENOTFOUND'
+        });
+        expect(
+          JSON.stringify([log.info.mock.calls, log.warn.mock.calls])
+        ).not.toContain('private-value');
       });
     } finally {
       const { PostHog } = require('posthog-node');
       (PostHog as jest.Mock).mockClear();
       readFileSync.mockReturnValue('');
+      if (previousKey === undefined) {
+        delete process.env.POSTHOG_API_KEY;
+      } else {
+        process.env.POSTHOG_API_KEY = previousKey;
+      }
+      if (previousHost === undefined) {
+        delete process.env.POSTHOG_HOST;
+      } else {
+        process.env.POSTHOG_HOST = previousHost;
+      }
+    }
+  });
+
+  it('logs request outcomes without logging the key, body, or URL query', async () => {
+    const previousKey = process.env.POSTHOG_API_KEY;
+    const previousHost = process.env.POSTHOG_HOST;
+    const previousFetch = global.fetch;
+    const electronFetch = require('electron').net.fetch as jest.Mock;
+    process.env.POSTHOG_API_KEY = 'private-key';
+    process.env.POSTHOG_HOST = 'https://posthog.example';
+
+    try {
+      let request: (
+        url: string,
+        options: Parameters<typeof fetch>[1]
+      ) => Promise<Response>;
+      jest.isolateModules(() => {
+        const telemetry = require('../telemetry');
+        const { PostHog } = require('posthog-node');
+        telemetry.initTelemetry();
+        request = (PostHog as jest.Mock).mock.calls.slice(-1)[0][1].fetch;
+      });
+
+      const log = require('electron-log').default;
+      const options = {
+        method: 'POST',
+        headers: { Authorization: 'private-key' },
+        body: 'private-body'
+      };
+      const url = 'https://posthog.example/batch/?token=private-query';
+      const response = { status: 200 } as Response;
+      global.fetch = jest.fn().mockRejectedValue(new Error('Node fetch used'));
+      electronFetch.mockResolvedValueOnce(response);
+      await expect(request!(url, options)).resolves.toBe(response);
+      expect(electronFetch).toHaveBeenCalledWith(url, options);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith('Telemetry request started', {
+        hostOrigin: 'https://posthog.example',
+        endpoint: 'batch',
+        compressed: false
+      });
+      expect(log.info).toHaveBeenCalledWith(
+        'Telemetry request completed',
+        expect.objectContaining({ status: 200 })
+      );
+
+      const networkError = Object.assign(new TypeError('private-message'), {
+        cause: Object.assign(new Error('private-cause'), { code: 'ENOTFOUND' })
+      });
+      electronFetch.mockRejectedValueOnce(networkError);
+      await expect(request!(url, options)).rejects.toBe(networkError);
+      expect(log.warn).toHaveBeenCalledWith(
+        'Telemetry request failed',
+        expect.objectContaining({ name: 'TypeError', code: 'ENOTFOUND' })
+      );
+      const chromiumError = new Error(
+        'net::ERR_CERT_AUTHORITY_INVALID private-message'
+      );
+      electronFetch.mockRejectedValueOnce(chromiumError);
+      await expect(request!(url, options)).rejects.toBe(chromiumError);
+      expect(log.warn).toHaveBeenCalledWith(
+        'Telemetry request failed',
+        expect.objectContaining({ code: 'ERR_CERT_AUTHORITY_INVALID' })
+      );
+      expect(
+        JSON.stringify([log.info.mock.calls, log.warn.mock.calls])
+      ).not.toMatch(
+        /private-key|private-body|private-query|private-message|private-cause/
+      );
+    } finally {
+      const { PostHog } = require('posthog-node');
+      (PostHog as jest.Mock).mockClear();
+      electronFetch.mockReset();
+      global.fetch = previousFetch;
       if (previousKey === undefined) {
         delete process.env.POSTHOG_API_KEY;
       } else {
