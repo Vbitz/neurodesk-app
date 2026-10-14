@@ -85,6 +85,8 @@ jobs:
       - name: Create Application Installer for Test
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # disable code signing if not release asset
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: |
           yarn dist:${{ matrix.cfg.platform }}
         if: steps.release-exists.outputs.result == 'false'
@@ -101,6 +103,10 @@ jobs:
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
         run: |
+          if [[ -z "$POSTHOG_HOST" || -z "$POSTHOG_API_KEY" ]]; then
+            echo "::error::POSTHOG_HOST and POSTHOG_API_KEY must be configured for release builds"
+            exit 1
+          fi
           set env DEBUG=electron-builder
           yarn dist:${{ matrix.cfg.platform }}
         if: steps.release-exists.outputs.result == 'true'

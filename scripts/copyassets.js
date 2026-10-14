@@ -84,6 +84,16 @@ function copyAssests() {
   }
   fs.copySync('package.json', path.join(dest, 'package.json'));
 
+  // The installed app does not inherit the CI runner's environment.
+  // The PostHog project token is a client-side identifier, not a personal API key.
+  fs.writeFileSync(
+    path.join(dest, 'main', 'telemetry-config.json'),
+    JSON.stringify({
+      apiKey: process.env.POSTHOG_API_KEY || '',
+      host: process.env.POSTHOG_HOST || ''
+    })
+  );
+
   const toolkitPath = path.join(
     '../node_modules',
     '@jupyter-notebook/web-components',

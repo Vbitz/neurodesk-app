@@ -195,6 +195,51 @@ describe('buildScrubList', () => {
 });
 
 describe('mini app selection telemetry', () => {
+  it('initializes from packaged build configuration without runtime environment variables', () => {
+    const previousKey = process.env.POSTHOG_API_KEY;
+    const previousHost = process.env.POSTHOG_HOST;
+    delete process.env.POSTHOG_API_KEY;
+    delete process.env.POSTHOG_HOST;
+
+    const fs = require('fs');
+    const readFileSync = fs.readFileSync as jest.Mock;
+    readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('telemetry-config.json')) {
+        return JSON.stringify({
+          apiKey: 'packaged-test-key',
+          host: 'https://posthog.example'
+        });
+      }
+      return '';
+    });
+
+    try {
+      jest.isolateModules(() => {
+        const telemetry = require('../telemetry');
+        const { PostHog } = require('posthog-node');
+        telemetry.initTelemetry();
+        expect(PostHog).toHaveBeenCalledWith('packaged-test-key', {
+          host: 'https://posthog.example',
+          enableExceptionAutocapture: true
+        });
+      });
+    } finally {
+      const { PostHog } = require('posthog-node');
+      (PostHog as jest.Mock).mockClear();
+      readFileSync.mockReturnValue('');
+      if (previousKey === undefined) {
+        delete process.env.POSTHOG_API_KEY;
+      } else {
+        process.env.POSTHOG_API_KEY = previousKey;
+      }
+      if (previousHost === undefined) {
+        delete process.env.POSTHOG_HOST;
+      } else {
+        process.env.POSTHOG_HOST = previousHost;
+      }
+    }
+  });
+
   it('sends only the selected app and launch type when consent is on', () => {
     const previousKey = process.env.POSTHOG_API_KEY;
     const previousHost = process.env.POSTHOG_HOST;

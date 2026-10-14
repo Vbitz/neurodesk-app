@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { app } from 'electron';
 import { getLogFilePath, getUserHomeDir } from './utils';
 import { SettingType, TelemetryConsent, userSettings } from './config/settings';
@@ -14,12 +15,26 @@ export interface ICrashReport {
   [key: string]: string | undefined;
 }
 
-const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
-const POSTHOG_HOST = process.env.POSTHOG_HOST;
 const LOG_TAIL_LINES = 50;
 
 let posthogClient: any = null;
 let distinctId = '';
+
+function getPostHogConfig(): { apiKey: string; host: string } {
+  let packagedConfig: { apiKey?: string; host?: string } = {};
+  try {
+    packagedConfig = JSON.parse(
+      fs.readFileSync(path.join(__dirname, 'telemetry-config.json'), 'utf8')
+    );
+  } catch {
+    // The packaged configuration is absent during development and unit tests.
+  }
+
+  return {
+    apiKey: process.env.POSTHOG_API_KEY || packagedConfig.apiKey || '',
+    host: process.env.POSTHOG_HOST || packagedConfig.host || ''
+  };
+}
 
 /**
  * Generate an anonymous machine ID (hash of hostname + OS, no PII).
@@ -43,14 +58,16 @@ export function initTelemetry(): void {
     return;
   }
 
-  if (!POSTHOG_API_KEY || !POSTHOG_HOST) {
+  const { apiKey, host } = getPostHogConfig();
+
+  if (!apiKey || !host) {
     if (process.env.NODE_ENV === 'development') {
-      if (!POSTHOG_API_KEY) {
+      if (!apiKey) {
         console.error(
           'POSTHOG_API_KEY variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once POSTHOG_API_KEY is configured'
         );
       }
-      if (!POSTHOG_HOST) {
+      if (!host) {
         console.error(
           'POSTHOG_HOST variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once POSTHOG_HOST is configured'
         );
@@ -65,8 +82,8 @@ export function initTelemetry(): void {
 
   distinctId = generateDistinctId();
 
-  posthogClient = new PostHog(POSTHOG_API_KEY, {
-    host: POSTHOG_HOST,
+  posthogClient = new PostHog(apiKey, {
+    host,
     enableExceptionAutocapture: true
   });
 }
