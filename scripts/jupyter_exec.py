@@ -299,7 +299,7 @@ def main():
     ap.add_argument(
         '--timeout',
         type=int,
-        default=1800,
+        default=3600,
         help='Per-execution timeout in seconds'
     )
     ap.add_argument(
