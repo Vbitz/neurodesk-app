@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { app } from 'electron';
+import log from 'electron-log';
 import { getLogFilePath, getUserHomeDir } from './utils';
 import { SettingType, TelemetryConsent, userSettings } from './config/settings';
 import { getNeurodesktopStoragePath } from './app';
@@ -20,7 +21,12 @@ const LOG_TAIL_LINES = 50;
 let posthogClient: any = null;
 let distinctId = '';
 
-function getPostHogConfig(): { apiKey: string; host: string } {
+function getPostHogConfig(): {
+  apiKey: string;
+  host: string;
+  apiKeySource: string;
+  hostSource: string;
+} {
   let packagedConfig: { apiKey?: string; host?: string } = {};
   try {
     packagedConfig = JSON.parse(
@@ -32,8 +38,29 @@ function getPostHogConfig(): { apiKey: string; host: string } {
 
   return {
     apiKey: process.env.POSTHOG_API_KEY || packagedConfig.apiKey || '',
-    host: process.env.POSTHOG_HOST || packagedConfig.host || ''
+    host: process.env.POSTHOG_HOST || packagedConfig.host || '',
+    apiKeySource: process.env.POSTHOG_API_KEY
+      ? 'environment'
+      : packagedConfig.apiKey
+      ? 'package'
+      : 'missing',
+    hostSource: process.env.POSTHOG_HOST
+      ? 'environment'
+      : packagedConfig.host
+      ? 'package'
+      : 'missing'
   };
+}
+
+function getHostOrigin(host: string): string {
+  if (!host) {
+    return 'missing';
+  }
+  try {
+    return new URL(host).origin;
+  } catch {
+    return 'invalid';
+  }
 }
 
 /**
@@ -55,12 +82,21 @@ export function initTelemetry(): void {
   ) as TelemetryConsent;
 
   if (consent !== TelemetryConsent.On) {
+    log.info('Telemetry disabled: consent not granted');
     return;
   }
 
-  const { apiKey, host } = getPostHogConfig();
+  const { apiKey, host, apiKeySource, hostSource } = getPostHogConfig();
+  log.info('Telemetry configuration', {
+    apiKey: apiKey ? 'configured' : 'missing',
+    apiKeySource,
+    host: host ? 'configured' : 'missing',
+    hostSource,
+    hostOrigin: getHostOrigin(host)
+  });
 
   if (!apiKey || !host) {
+    log.warn('Telemetry disabled: PostHog configuration is incomplete');
     if (process.env.NODE_ENV === 'development') {
       if (!apiKey) {
         console.error(
@@ -86,6 +122,19 @@ export function initTelemetry(): void {
     host,
     enableExceptionAutocapture: true
   });
+  posthogClient.on('capture', (message: { event?: string }) => {
+    log.info('Telemetry event queued', { event: message.event });
+  });
+  posthogClient.on('flush', (messages: unknown[]) => {
+    log.info('Telemetry batch delivered', { count: messages.length });
+  });
+  posthogClient.on('error', (error: { name?: string; status?: number }) => {
+    log.warn('Telemetry delivery failed', {
+      name: error.name,
+      status: error.status
+    });
+  });
+  log.info('Telemetry initialized');
 }
 
 /**
