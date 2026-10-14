@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { app } from 'electron';
+import { app, net } from 'electron';
 import log from 'electron-log';
 import { getLogFilePath, getUserHomeDir } from './utils';
 import { SettingType, TelemetryConsent, userSettings } from './config/settings';
@@ -63,6 +63,81 @@ function getHostOrigin(host: string): string {
   }
 }
 
+function getRequestEndpoint(url: string): string {
+  try {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/batch/')) {
+      return 'batch';
+    }
+    if (pathname.endsWith('/i/v1/analytics/events')) {
+      return 'capture-v1';
+    }
+    return 'other';
+  } catch {
+    return 'invalid';
+  }
+}
+
+function getNetworkErrorCode(error: unknown): string | undefined {
+  let current = error;
+  for (let depth = 0; depth < 3; depth++) {
+    if (!current || typeof current !== 'object') {
+      return undefined;
+    }
+    const nested = current as {
+      code?: unknown;
+      cause?: unknown;
+      error?: unknown;
+      errors?: unknown;
+      message?: unknown;
+    };
+    if (typeof nested.code === 'string' && /^[A-Z0-9_]+$/.test(nested.code)) {
+      return nested.code;
+    }
+    if (typeof nested.message === 'string') {
+      const chromiumCode = /\bnet::(ERR_[A-Z0-9_]+)\b/.exec(nested.message);
+      if (chromiumCode) {
+        return chromiumCode[1];
+      }
+    }
+    current =
+      nested.cause ||
+      nested.error ||
+      (Array.isArray(nested.errors) ? nested.errors[0] : undefined);
+  }
+  return undefined;
+}
+
+async function loggedPostHogFetch(
+  url: string,
+  options: Parameters<typeof fetch>[1]
+): Promise<Response> {
+  const request = {
+    hostOrigin: getHostOrigin(url),
+    endpoint: getRequestEndpoint(url),
+    compressed: new Headers(options?.headers).get('Content-Encoding') === 'gzip'
+  };
+  const startedAt = Date.now();
+  log.info('Telemetry request started', request);
+  try {
+    const response = await net.fetch(url, options);
+    log.info('Telemetry request completed', {
+      ...request,
+      status: response.status,
+      durationMs: Date.now() - startedAt
+    });
+    return response;
+  } catch (error) {
+    log.warn('Telemetry request failed', {
+      ...request,
+      name: error instanceof Error ? error.name : 'UnknownError',
+      code: getNetworkErrorCode(error),
+      durationMs: Date.now() - startedAt
+    });
+    throw error;
+  }
+}
+
 /**
  * Generate an anonymous machine ID (hash of hostname + OS, no PII).
  */
@@ -120,7 +195,8 @@ export function initTelemetry(): void {
 
   posthogClient = new PostHog(apiKey, {
     host,
-    enableExceptionAutocapture: true
+    enableExceptionAutocapture: true,
+    fetch: loggedPostHogFetch
   });
   posthogClient.on('capture', (message: { event?: string }) => {
     log.info('Telemetry event queued', { event: message.event });
@@ -131,7 +207,8 @@ export function initTelemetry(): void {
   posthogClient.on('error', (error: { name?: string; status?: number }) => {
     log.warn('Telemetry delivery failed', {
       name: error.name,
-      status: error.status
+      status: error.status,
+      code: getNetworkErrorCode(error)
     });
   });
   log.info('Telemetry initialized');
