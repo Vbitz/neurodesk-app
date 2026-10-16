@@ -65,7 +65,6 @@ function copyAssests() {
     path.join(srcDir, 'assets', 'sciget-icon.svg'),
     path.join(dest, '../app-assets', 'sciget-icon.svg')
   );
-  fs.copySync('neurodesktop.toml', path.join(dest, 'neurodesktop.toml'));
   fs.copySync(
     'src/main/config/baseContainerConfig.yml',
     path.join(dest, 'main/config/baseContainerConfig.yml')

@@ -227,7 +227,6 @@
     "js-yaml": "^4.3.2",
     "posthog-node": "^5.47.3",
     "semver": "^7.5.2",
-    "toml": "^3.0.0",
     "update-electron-app": "^2.0.1",
     "which": "^2.0.2",
     "winreg": "^1.2.4",
