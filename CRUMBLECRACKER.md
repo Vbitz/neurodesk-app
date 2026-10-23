@@ -57,6 +57,9 @@ The installer workflow builds CrumbleCracker from the immutable source revision 
 `.github/actions/build-crumblecracker/action.yml`, on a native runner for each
 architecture. For local packaging, stage the matching built/signed `NeurodeskAppX`
 (or `NeurodeskAppX.exe`) in `crumblecracker/arm64/` or `crumblecracker/x64/`.
+Package only the staged architecture, for example `yarn dist:mac --arm64` or
+`yarn dist:mac --x64`. macOS DMG/ZIP targets inherit the requested architecture
+rather than expanding each native CI job into a dual-architecture build.
 The packaging hook refuses a missing or empty backend. No TinyRange distribution
 is downloaded or bundled. Native test caches and backend sources are excluded
 from app payloads. Packaging configuration is not installer runtime acceptance.

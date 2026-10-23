@@ -79,20 +79,8 @@
       "gatekeeperAssess": false,
       "hardenedRuntime": true,
       "target": [
-        {
-          "arch": [
-            "x64",
-            "arm64"
-          ],
-          "target": "dmg"
-        },
-        {
-          "arch": [
-            "x64",
-            "arm64"
-          ],
-          "target": "zip"
-        }
+        "dmg",
+        "zip"
       ]
     },
     "nsis": {
