@@ -468,6 +468,29 @@ jobs:
       # Docker/Podman: execute tests inside the app-owned container
       # ───────────────────────────────────────────────
 
+      # The 2026-09-23 image's agent-shell test spiders all of MODULEPATH
+      # with a 60s subprocess deadline. On a cold CVMFS cache, that includes
+      # downloading the remote module catalog. Upstream neurodesktop#979
+      # isolates that test to its fixture, but is not in this release image.
+      # Warm the real catalog with its own bounded network budget; do not
+      # skip the test, retry pytest, or modify the installed image test suite.
+      - name: 'Wait for module catalog readiness (Docker/Podman)'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
+        timeout-minutes: 6
+        run: |
+          ENGINE="${{ matrix.cfg.engine }}"
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+          echo 'Warming the module catalog before time-bounded shell tests...'
+          $ENGINE exec -u jovyan "$CONTAINER_NAME" \
+            timeout --signal=TERM --kill-after=10s 300s \
+            bash -lc 'module spider > /tmp/neurodesk-e2e-module-catalog.log 2>&1' || {
+              echo 'FAIL: Module catalog did not become ready within its network budget'
+              $ENGINE exec -u jovyan "$CONTAINER_NAME" \
+                tail -80 /tmp/neurodesk-e2e-module-catalog.log || true
+              exit 1
+            }
+          echo 'PASS: Module catalog is ready'
+
       - name: 'Test: Unit tests inside container via pytest (Docker/Podman)'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
