@@ -82,3 +82,15 @@ test('stop cancels a pending import without booting a VM', async () => {
   await rejection;
   expect(calls().some(call => call.path === '/v1/vms')).toBe(false);
 }, 15000);
+
+test('does not expose a host data share when none is configured', async () => {
+  const client = launch();
+  try {
+    await client.start({ ...options, directory: '' });
+    expect(calls().find(call => call.path === '/v1/vms').body.shares).toEqual(
+      []
+    );
+  } finally {
+    await client.stop();
+  }
+}, 15000);

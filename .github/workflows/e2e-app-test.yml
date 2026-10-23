@@ -14,6 +14,9 @@ on:
 #   Podman    — Linux only (pre-installed on ubuntu runners)
 # Native CrumbleCracker UI/GPU acceptance runs on a logged-in native peer; see CRUMBLECRACKER.md.
 
+permissions:
+  contents: read
+  
 jobs:
   # Gate the (expensive, 60-minute) e2e matrix on the launch-script unit tests.
   # They catch flag/ordering/syntax regressions in seconds, and cover the
@@ -50,15 +53,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # Warm the local image store while the app downloads/installs.
+      # Warm the local image store with the configured fallback version while
+      # the app downloads/installs. The app may select a newer fetched release.
       #
       # server.ts:486 runs `<engine> image inspect <image>` and skips its own pull
-      # when the image is already present. So pre-pulling here does two things:
+      # when the selected image is already present. So pre-pulling can:
       #   1. Overlaps the ~2.5 GB fetch with artifact download + apt + dpkg install
       #      instead of paying it serially inside the launch script.
-      #   2. Takes the launch script's `timeout 300` pull (server.ts:497) off the
-      #      critical path. That timeout currently turns a slow Docker Hub day into
-      #      a hard run failure rather than a slow run.
+      #   2. Take the launch script's `timeout 300` pull (server.ts:497) off the
+      #      critical path when the fallback version is selected.
       #
       # Best-effort by design: if this fails or times out, the app pulls as before.
       - name: Start container image pre-pull (background)
@@ -67,15 +70,14 @@ jobs:
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
 
-          TAG=$(grep -E '^[[:space:]]*jupyter_neurodesk_version' neurodesktop.toml \
+          TAG=$(grep -E '^[[:space:]]*defaultVersion:' container_installer/neurodesk.yml \
                 | head -1 | cut -d'"' -f2)
           if [ -z "$TAG" ]; then
-            echo "FAIL: could not read jupyter_neurodesk_version from neurodesktop.toml"
+            echo "FAIL: could not read defaultVersion from container_installer/neurodesk.yml"
             exit 1
           fi
 
-          # Must match server.ts:165 (`vnmd/neurodesktop:${tag}`) exactly, or the
-          # app's image-inspect check misses and it pulls again anyway.
+          # Match server.ts:165 (`vnmd/neurodesktop:${tag}`) for this version.
           SHORT_IMAGE="vnmd/neurodesktop:${TAG}"
           PULL_IMAGE="docker.io/${SHORT_IMAGE}"
           LOG="/tmp/prepull.log"
@@ -150,6 +152,14 @@ jobs:
         run: |
           echo "Using dist/win-unpacked/ directly (no installer needed)"
 
+      - name: Install E2E Python dependencies
+        run: |
+          if [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+            python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
+          else
+            python3 -m pip install --upgrade --user websocket-client requests
+          fi
+
       - name: Setup Podman for rootless CI
         if: matrix.cfg.engine == 'podman'
         run: |
@@ -180,13 +190,30 @@ jobs:
             SETTINGS_DIR="$APPDATA/neurodeskapp"
           fi
 
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
+            WORKING_DIR="$TEMP/neurodesk-test"
+          else
+            WORKING_DIR="/tmp/neurodesk-test"
+          fi
+
           mkdir -p "$SETTINGS_DIR"
-          printf '%s\n' '{' \
-            '  "startupMode": "new-local-session",' \
-            '  "engineType": "${{ matrix.cfg.engine }}",' \
-            '  "logLevel": "debug",' \
-            '  "checkForUpdatesAutomatically": false' \
-            '}' > "$SETTINGS_DIR/settings.json"
+          SETTINGS_DIR="$SETTINGS_DIR" WORKING_DIR="$WORKING_DIR" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          settings = {
+              "startupMode": "welcome-page",
+              "defaultWorkingDirectory": os.environ["WORKING_DIR"],
+              "serverArgs": os.environ["WORKING_DIR"],
+              "engineType": "${{ matrix.cfg.engine }}",
+              "logLevel": "debug",
+              "telemetryConsent": "off",
+              "checkForUpdatesAutomatically": False,
+          }
+          path = Path(os.environ["SETTINGS_DIR"]) / "settings.json"
+          path.write_text(json.dumps(settings, indent=2))
+          PY
 
           echo "=== Settings ==="
           cat "$SETTINGS_DIR/settings.json"
@@ -194,11 +221,7 @@ jobs:
           # Create storage and working directories
           mkdir -p ~/neurodesktop-storage
           chmod 777 ~/neurodesktop-storage
-          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
-            mkdir -p "$TEMP/neurodesk-test"
-          else
-            mkdir -p /tmp/neurodesk-test
-          fi
+          mkdir -p "$WORKING_DIR"
 
       # Join the background pre-pull before launching, so the app never races a
       # half-finished pull. Never fails the job: if the image is not local, the
@@ -257,15 +280,17 @@ jobs:
             exit 1
           fi
 
-          # Launch with stdout/stderr captured for diagnostics
+          # Launch the welcome page with DevTools available for app selection.
+          # --working-dir is intentionally omitted: it bypasses the welcome
+          # page and creates a local session without a container config.
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             xvfb-run --auto-servernum "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           else
             "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           fi
@@ -283,6 +308,9 @@ jobs:
           echo "working_dir=$WORKING_DIR" >> "$GITHUB_OUTPUT"
           echo "app_log=$APP_LOG" >> "$GITHUB_OUTPUT"
           echo "Launched app with PID $APP_PID, engine=${{ matrix.cfg.engine }}, working dir: $WORKING_DIR"
+
+      - name: 'Select Neurodesk mini app for local launch'
+        run: python3 scripts/select_e2e_mini_app.py neurodesk --port 9222
 
       # ───────────────────────────────────────────────
       # App orchestration tests
@@ -394,7 +422,7 @@ jobs:
             exit 1
           fi
 
-          # Verify /data mount (from --working-dir)
+          # Verify /data mount (from the configured default working directory)
           if $ENGINE inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' | grep -q '/data'; then
             echo "PASS: /data mount present (working dir)"
           else

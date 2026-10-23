@@ -255,13 +255,15 @@ export class CrumbleCracker {
           user: 'jovyan',
           home: { mode: 'persistent', id: options.name },
           storage: { host_path: options.storage, create: true },
-          shares: [
-            {
-              host_path: options.directory,
-              guest_path: '/data',
-              read_only: false
-            }
-          ],
+          shares: options.directory
+            ? [
+                {
+                  host_path: options.directory,
+                  guest_path: '/data',
+                  read_only: false
+                }
+              ]
+            : [],
           network: { enabled: true, allow_internet: true },
           display: { width: 1440, height: 900, gpu_acceleration: options.gpu },
           cvmfs: { enabled: options.cvmfs },

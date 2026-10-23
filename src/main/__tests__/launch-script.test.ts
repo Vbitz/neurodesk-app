@@ -1,23 +1,122 @@
-import { generateLaunchScript, ILaunchScriptParams } from '../server';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { ContainerConfigParser } from '../config/containerConfigParser';
 import { EngineType } from '../config/settings';
+import {
+  getDefaultStorageDirectory as getStorageDirectory,
+  readDefaultStorageMount
+} from '../config/storageMount';
+import {
+  generateLaunchScript,
+  getDefaultStorageDirectory,
+  ILaunchScriptParams
+} from '../server';
 
-function baseParams(
-  overrides: Partial<ILaunchScriptParams> = {}
-): ILaunchScriptParams {
+const baseConfigPath = path.join(
+  __dirname,
+  '../config/baseContainerConfig.yml'
+);
+const containerConfigPath = path.join(
+  __dirname,
+  '../../../container_installer/neurodesk.yml'
+);
+
+/**
+ * `tag` is not a launch-script param any more — it is the image version the
+ * parser was built with. The helper keeps it as an override so each test can
+ * still pin one.
+ */
+interface ITestOverrides extends Partial<Omit<ILaunchScriptParams, 'parser'>> {
+  tag?: string;
+}
+
+function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
+  const { tag = '2024-01-01', ...rest } = overrides;
+  const platform = rest.platform || 'linux';
   return {
+    parser: new ContainerConfigParser(baseConfigPath, containerConfigPath, tag),
     engineType: EngineType.Docker,
     port: 8888,
     token: 'jlab:srvr:abc123',
-    tag: '2024-01-01',
-    platform: 'linux',
-    workingDirectory: '',
+    platform,
     cvmfsMode: 'false',
-    overrideDefaultServerArgs: false,
     osVersion: '2204',
-    containerName: 'neurodeskapp',
-    ...overrides
+    tinyrangePath: '/usr/local/bin/tinyrange',
+    storageDirectory:
+      platform === 'win32'
+        ? 'C:\\neurodesktop-storage'
+        : '~/neurodesktop-storage',
+    additionalDirectory: '',
+    isNfsAdditionalDirectory: false,
+    overrideDefaultServerArgs: false,
+    ...rest
   };
 }
+
+function parserWithStorageMount(mountName: string): ContainerConfigParser {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurodesk-mount-'));
+  const tempConfigPath = path.join(tempDir, 'neurodesk.yml');
+  const config = fs
+    .readFileSync(containerConfigPath, 'utf8')
+    .replace(/^defaultStorageMount:.*$/m, `defaultStorageMount: ${mountName}`);
+  fs.writeFileSync(tempConfigPath, config);
+  try {
+    return new ContainerConfigParser(baseConfigPath, tempConfigPath);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+describe('YAML storage mount', () => {
+  it('keeps the Windows and Unix default host path patterns', () => {
+    expect(readDefaultStorageMount()).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+    expect(getStorageDirectory('linux', 'app-storage', '/home/tester')).toBe(
+      '/home/tester/app-storage'
+    );
+    expect(getStorageDirectory('darwin', 'app-storage', '~')).toBe(
+      '~/app-storage'
+    );
+    expect(getStorageDirectory('win32', 'app-storage')).toBe('C:/app-storage');
+  });
+
+  it.each([
+    ['linux', EngineType.Docker],
+    ['linux', EngineType.Podman],
+    ['win32', EngineType.Docker],
+    ['win32', EngineType.Podman]
+  ])('%s / %s uses the configured mount', (platform, engineType) => {
+    const params = baseParams({
+      platform,
+      engineType,
+      storageDirectory: undefined
+    });
+    params.parser = parserWithStorageMount('app-storage');
+    const script = generateLaunchScript(params);
+    const hostPath = getStorageDirectory(platform, 'app-storage');
+
+    expect(script).toContain(`${hostPath}:/app-storage`);
+    expect(script).toContain('-e NEURODESK_STORAGE_MOUNT=app-storage');
+    expect(script).not.toContain(':/neurodesktop-storage');
+  });
+
+  it('keeps a custom host directory and uses the configured container target', () => {
+    const params = baseParams({ storageDirectory: '/mnt/shared-data' });
+    params.parser = parserWithStorageMount('app-storage');
+    expect(generateLaunchScript(params)).toContain(
+      '-v /mnt/shared-data:/app-storage'
+    );
+  });
+
+  it.each(['../bad', '/absolute', 'two words'])(
+    'rejects invalid mount name %s',
+    mountName => {
+      expect(() => parserWithStorageMount(mountName)).toThrow(
+        'defaultStorageMount must be a single directory name'
+      );
+    }
+  );
+});
 
 describe('generateLaunchScript', () => {
   // ── Docker tests ──
@@ -191,14 +290,18 @@ describe('generateLaunchScript', () => {
   // ── Podman tests ──
 
   describe('Podman engine', () => {
-    it('uses podman run command', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.Podman
-        })
-      );
-      expect(script).toContain('podman run -d --rm');
-    });
+    it.each(['linux', 'darwin', 'win32'])(
+      'uses podman run with cgroups disabled on %s',
+      platform => {
+        const script = generateLaunchScript(
+          baseParams({
+            engineType: EngineType.Podman,
+            platform
+          })
+        );
+        expect(script).toContain('podman run --cgroups=disabled -d --rm');
+      }
+    );
 
     it('uses -v for home volume (not --mount)', () => {
       const script = generateLaunchScript(
@@ -267,7 +370,7 @@ describe('generateLaunchScript', () => {
     it('adds /data volume mount when workingDirectory is set (Docker)', () => {
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       // resolveWorkingDirectory may resolve the path; just check :/data mount is present
@@ -275,19 +378,19 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('--volume');
     });
 
-    it('does not mount /data when working directory is invalid', () => {
+    it('mounts exactly the directory it is given', () => {
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: '/nonexistent/path/abc123'
+          additionalDirectory: '/mnt/scratch/project one'
         })
       );
-      expect(script).not.toContain(':/data');
+      expect(script).toContain('--volume "/mnt/scratch/project one":/data');
     });
 
     it('does not add /data mount when workingDirectory is empty', () => {
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: ''
+          additionalDirectory: ''
         })
       );
       expect(script).not.toContain(':/data');
@@ -302,8 +405,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/nfs/tpolk/mind',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/nfs/tpolk/mind',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain(':/data');
@@ -313,8 +416,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain(':/data');
@@ -328,8 +431,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: false
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: false
         })
       );
       expect(script).toContain(':/data');
@@ -341,8 +444,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain('timeout 5 ls -ld');
@@ -354,8 +457,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: false
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: false
         })
       );
       expect(script).not.toContain('NFS mount may be stale');
@@ -416,10 +519,19 @@ describe('generateLaunchScript', () => {
   // ── Custom storage directory ──
 
   describe('custom storage directory', () => {
-    it('uses default neurodesktop-storage when storageDirectory is empty', () => {
+    it('uses the platform default when storageDirectory is empty', () => {
       const script = generateLaunchScript(baseParams({ storageDirectory: '' }));
       expect(script).toContain(
-        '-v ~/neurodesktop-storage:/neurodesktop-storage'
+        `-v ${getDefaultStorageDirectory('linux')}:/neurodesktop-storage`
+      );
+    });
+
+    it('uses C:/neurodesktop-storage as the Windows default', () => {
+      const script = generateLaunchScript(
+        baseParams({ platform: 'win32', storageDirectory: '' })
+      );
+      expect(script).toContain(
+        '-v C:/neurodesktop-storage:/neurodesktop-storage'
       );
     });
 
@@ -479,13 +591,16 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('HOST_GATEWAY_IP="host-gateway"');
     });
 
-    it('resolves the default gateway via ipconfig for Podman on Windows', () => {
+    it('resolves the default gateway via PowerShell Get-NetRoute for Podman on Windows', () => {
       const script = generateLaunchScript(
         baseParams({ engineType: EngineType.Podman, platform: 'win32' })
       );
-      expect(script).toContain('ipconfig');
-      expect(script).toContain('Default Gateway');
+      // Uses locale-independent PowerShell API instead of parsing ipconfig text
+      expect(script).toContain('Get-NetRoute');
+      expect(script).toContain('0.0.0.0/0');
       expect(script).toContain('SET HOST_GATEWAY_IP=host-gateway');
+      // Must NOT use ipconfig (locale-dependent)
+      expect(script).not.toContain('ipconfig');
     });
 
     it('does not probe for Docker on Windows', () => {

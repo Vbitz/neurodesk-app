@@ -5,7 +5,7 @@
     "url": "https://neurodesk.org/"
   },
   "bugs": {
-    "url": "https://github.com/NeuroDesk/neurodesk-app/issues"
+    "url": "https://github.com/scigetorg/neurodesk-app/issues"
   },
   "build": {
     "afterSign": "scripts/notarize.js",
@@ -135,8 +135,8 @@
     "fast-xml-parser": "^5.7.0",
     "fix-path": "^3.0.0",
     "js-yaml": "^4.3.2",
+    "posthog-node": "^5.47.3",
     "semver": "^7.5.2",
-    "toml": "^3.0.0",
     "update-electron-app": "^2.0.1",
     "which": "^2.0.2",
     "winreg": "^1.2.4",
@@ -157,7 +157,7 @@
     "@typescript-eslint/eslint-plugin": "~5.28.0",
     "@typescript-eslint/parser": "~5.28.0",
     "electron": "^43.3.0",
-    "electron-builder": "^26.0.7",
+    "electron-builder": "^26.16.1",
     "eslint": "~8.17.0",
     "eslint-config-prettier": "~8.5.0",
     "eslint-plugin-prettier": "~4.0.0",
@@ -182,13 +182,13 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "homepage": "https://github.com/NeuroDesk/neurodesk-app#readme",
+  "homepage": "https://github.com/scigetorg/neurodesk-app#readme",
   "jlab_version": "4.0.0-1",
   "license": "BSD-3-Clause",
   "main": "./build/out/main/main.js",
   "name": "neurodeskapp",
   "packageManager": "yarn@1.22.22",
-  "repository": "https://github.com/NeuroDesk/neurodesk-app",
+  "repository": "https://github.com/scigetorg/neurodesk-app",
   "scripts": {
     "build": "tsc && yarn bundle:preload && node ./scripts/extract.js && node ./scripts/copyassets.js",
     "build:all": "yarn clean && yarn build && yarn start",
@@ -216,7 +216,6 @@
     "packdir": "yarn build && electron-builder --dir",
     "prettier": "prettier --write \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
     "prettier:check": "prettier --check \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
-    "set_neurodesk_version": "node scripts/neurodeskutil.js --set-neurodesk-version",
     "start": "electron .",
     "start:linux": "electron . --linux-ui",
     "start:mac": "electron . --mac-ui",
@@ -228,5 +227,5 @@
     "watch:assets": "node ./scripts/extract.js && node ./scripts/copyassets.js watch",
     "watch:tsc": "tsc -w"
   },
-  "version": "2.0.0"
+  "version": "2.1.0"
 }

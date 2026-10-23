@@ -14,9 +14,6 @@ export enum EventTypeMain {
   OpenFolder = 'open-folder',
   CreateNewSession = 'create-new-session',
   CreateNewRemoteSession = 'create-new-remote-session',
-  OpenRecentSession = 'open-recent-session',
-  OpenRecentSessionWithDefaultEnv = 'open-recent-session-with-default-env',
-  DeleteRecentSession = 'delete-recent-session',
   OpenDroppedFiles = 'open-dropped-files',
   OpenNewsLink = 'open-news-link',
   SetRemoteServerOptions = 'set-remote-server-options',
@@ -55,7 +52,9 @@ export enum EventTypeMain {
   SetCtrlWBehavior = 'set-ctrl-w-behavior',
   ShowLogs = 'show-logs',
   GetChildProcressLog = 'get-child-process-log',
-  SetAuthDialogResponse = 'set-auth-dialog-response'
+  SetAuthDialogResponse = 'set-auth-dialog-response',
+  SetTelemetryConsent = 'set-telemetry-consent',
+  FetchReleases = 'fetch-releases'
 }
 
 // events sent to Renderer process
@@ -70,7 +69,6 @@ export enum EventTypeRenderer {
   SetTitle = 'set-title',
   SetActive = 'set-active',
   ShowServerStatus = 'show-server-status',
-  SetRecentSessionList = 'set-recent-session-list',
   SetNewsList = 'set-news-list',
   SetNotificationMessage = 'set-notification-message',
   DisableLocalServerActions = 'disable-local-server-actions',
