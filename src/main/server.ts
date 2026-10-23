@@ -1,3 +1,4 @@
+import { CrumbleCracker } from './crumblecracker';
 import { ChildProcess, execFile, execSync } from 'child_process';
 import { dialog } from 'electron';
 import { ArrayExt } from '@lumino/algorithm';
@@ -20,7 +21,7 @@ import {
   userSettings,
   WorkspaceSettings
 } from './config/settings';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { ProgressView } from './progressview/progressview';
 
 const BASE_CONTAINER_NAME = 'neurodeskapp';
@@ -98,7 +99,6 @@ export interface ILaunchScriptParams {
   workingDirectory: string;
   cvmfsMode: string;
   overrideDefaultServerArgs: boolean;
-  tinyrangePath: string;
   osVersion: string;
   containerName?: string;
   isNfsWorkingDirectory?: boolean;
@@ -110,8 +110,7 @@ export interface ILaunchScriptParams {
  * For Docker/Podman, remove any existing container with that name first.
  */
 export function resolveContainerName(engineType: EngineType): string {
-  const isTinyRange = engineType === EngineType.TinyRange;
-  if (isTinyRange) {
+  if (engineType !== EngineType.Docker && engineType !== EngineType.Podman) {
     return BASE_CONTAINER_NAME;
   }
 
@@ -139,6 +138,11 @@ export function resolveContainerName(engineType: EngineType): string {
  * Exported for testing.
  */
 export function generateLaunchScript(params: ILaunchScriptParams): string {
+  if (![EngineType.Docker, EngineType.Podman].includes(params.engineType)) {
+    throw new Error(
+      'Native backends use the CrumbleCracker API, not launch scripts'
+    );
+  }
   const {
     engineType,
     port,
@@ -148,7 +152,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     workingDirectory,
     cvmfsMode,
     overrideDefaultServerArgs,
-    tinyrangePath,
     osVersion,
     isNfsWorkingDirectory = false
   } = params;
@@ -162,7 +165,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const resolvedImageName = isPodman
     ? `docker.io/${imageRegistry}`
     : imageRegistry;
-  const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
   const CVMFS_DISABLE = cvmfsMode === 'true';
   const defaultStorageDir = isWin
@@ -218,70 +220,33 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   ];
 
   let launchArgs: string[] = [];
-  if (isTinyRange) {
-    const buildDir = path.join(neurodesktopStorageDir, 'build');
-    launchArgs = [
-      tinyrangePath,
-      'login',
-      `--buildDir ${buildDir.replace(/\\/g, '//')}`,
-      `--oci ${imageRegistry}`,
-      `--forward ${strPort}`,
-      '-m //lib/qemu:user',
-      `--mount-rw ${neurodesktopStorageDir}:/neurodesktop-storage`,
-      `--volume neurodeskHome,${20 * 1024},/home,persist`,
-      '--auto-scale'
-    ];
-  } else {
-    launchArgs = [
-      `${engineType} run -d --rm`,
-      ...commonLaunchArgs,
-      isPodman
-        ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
-        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
-      `--add-host=host.docker.internal:${
-        isWin ? '!HOST_GATEWAY_IP!' : '${HOST_GATEWAY_IP}'
-      } -e OLLAMA_HOST="http://host.docker.internal:11434"`,
-      parseInt(osVersion) >= 2310 && isDocker
-        ? '--security-opt apparmor=neurodeskapp'
-        : ''
-    ];
-  }
+  launchArgs = [
+    `${engineType} run -d --rm`,
+    ...commonLaunchArgs,
+    isPodman
+      ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
+      : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
+    `--add-host=host.docker.internal:${
+      isWin ? '!HOST_GATEWAY_IP!' : '${HOST_GATEWAY_IP}'
+    } -e OLLAMA_HOST="http://host.docker.internal:11434"`,
+    parseInt(osVersion) >= 2310 && isDocker
+      ? '--security-opt apparmor=neurodeskapp'
+      : ''
+  ];
 
   if (resolvedWorkingDir) {
     if (isWin) {
       resolvedWorkingDir = resolvedWorkingDir.replace(/\\/g, '/');
     }
-    launchArgs.push(
-      isTinyRange
-        ? `--mount-rw "${resolvedWorkingDir.replace(/\//g, '//')}":/data`
-        : ` --volume "${resolvedWorkingDir}":/data`
-    );
+    launchArgs.push(` --volume "${resolvedWorkingDir}":/data`);
   }
   launchArgs.push(resolvedImageName);
 
   if (!overrideDefaultServerArgs) {
-    launchArgs.push(
-      isTinyRange
-        ? `${containerEnvArgs.join(' ')} -E "chmod 777 /dev/fuse; chown -R ${
-            isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;${
-            resolvedWorkingDir
-              ? ` find /data -maxdepth 1 -exec chown ${
-                  isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-                } {} + 2>/dev/null || true; find /data -maxdepth 1 -exec chmod 777 {} + 2>/dev/null || true;`
-              : ''
-          }`
-        : ''
-    );
     for (const arg of serverLaunchArgsDefault) {
       launchArgs.push(
-        arg
-          .replace('{token}', token)
-          .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
+        arg.replace('{token}', token).replace('{port}', containerJupyterPort)
       );
-    }
-    if (isTinyRange) {
-      launchArgs.push('--FileContentsManager.delete_to_trash=False"');
     }
   }
 
@@ -299,9 +264,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
   // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
-  let fixPermissionsCmd = isTinyRange
-    ? ''
-    : isWin
+  let fixPermissionsCmd = isWin
     ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R 1000:100 /home/jovyan >NUL 2>NUL`
     : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
@@ -315,8 +278,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   let stopCmd = `${
     isPodman
       ? `${removeCmd}`
-      : isTinyRange
-      ? ``
       : isWin
       ? `${engineType} rm -f ${containerName} >NUL 2>&1`
       : `${
@@ -330,9 +291,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // Podman only added 'host-gateway' support in v4.1.0.
   // On macOS/Windows, Podman runs in a VM so host-gateway does not reliably resolve to the host.
   // We always resolve the actual gateway IP for Podman on macOS/Windows.
-  const hostGatewayResolveWin = isTinyRange
-    ? ''
-    : `
+  const hostGatewayResolveWin = `
         SET HOST_GATEWAY_IP=host-gateway
         ${
           isPodman
@@ -343,9 +302,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
             : ''
         }`;
 
-  const hostGatewayResolveUnix = isTinyRange
-    ? ''
-    : `
+  const hostGatewayResolveUnix = `
         HOST_GATEWAY_IP="host-gateway"
         ${
           isPodman
@@ -365,13 +322,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         }`;
 
   if (isWin) {
-    if (isTinyRange) {
-      script = `
-        setlocal enabledelayedexpansion
-        ${launchCmd}
-      `;
-    } else {
-      script = `
+    script = `
         setlocal enabledelayedexpansion
         SET ERRORCODE=0
         SET IMAGE_EXISTS=
@@ -398,15 +349,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         )
         ${engineType} logs -f ${containerName}
       `;
-    }
   } else {
-    if (isTinyRange) {
-      script = `
-        umask 000
-        ${launchCmd}
-        `;
-    } else {
-      script = `
+    script = `
         ${hostGatewayResolveUnix}
         echo $HOST_GATEWAY_IP
         echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
@@ -479,7 +423,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           ${engineType} logs -f ${containerName} 2>&1
         fi
         `;
-    }
   }
 
   return script;
@@ -494,25 +437,6 @@ function createLaunchScript(
   const isWin = process.platform === 'win32';
   const config = Config.loadConfig(path.join(__dirname, '..'));
   const tag = config.ConfigToml.jupyter_neurodesk_version;
-  const isDev = process.env.NODE_ENV === 'development';
-  log.debug('isDev', isDev);
-  const tinyrangePath = isDev
-    ? path
-        .join(
-          __dirname,
-          '../../..',
-          'tinyrange',
-          isWin ? 'tinyrange.exe' : 'tinyrange'
-        )
-        .replace(/\\/g, '/')
-    : path
-        .join(
-          process.resourcesPath,
-          'app',
-          'tinyrange',
-          isWin ? 'tinyrange.exe' : 'tinyrange'
-        )
-        .replace(/\\/g, '/');
   let osVersion = '';
   if (os.platform() === 'linux') {
     osVersion = execSync('lsb_release -a | grep Description')
@@ -530,18 +454,6 @@ function createLaunchScript(
     (process.platform === 'win32'
       ? 'C:/neurodesktop-storage'
       : path.join(os.homedir(), 'neurodesktop-storage'));
-
-  const isTinyRange = engineType === EngineType.TinyRange;
-  if (isTinyRange) {
-    const buildDir = path.join(storageDir, 'build');
-    if (fs.existsSync(buildDir)) {
-      fs.rmSync(path.join(buildDir, 'persist'), {
-        recursive: true,
-        force: true
-      });
-      log.info(`Removed TinyRange buildDir due to port change: ${buildDir}`);
-    }
-  }
 
   // Resolve container name with health check
   const containerName = resolveContainerName(engineType);
@@ -591,7 +503,6 @@ function createLaunchScript(
     workingDirectory: serverInfo.workingDirectory,
     cvmfsMode: serverInfo.cvmfsMode,
     overrideDefaultServerArgs: serverInfo.overrideDefaultServerArgs,
-    tinyrangePath,
     osVersion,
     containerName,
     isNfsWorkingDirectory,
@@ -601,7 +512,7 @@ function createLaunchScript(
   const ext = isWin ? 'bat' : 'sh';
   const scriptPath = createTempFile(`launch.${ext}`, script);
 
-  log.info(`Server launch script:\n${script}`);
+  log.info(`Server launch script created for ${engineType}`);
 
   if (!isWin) {
     fs.chmodSync(scriptPath, 0o755);
@@ -677,6 +588,73 @@ export class JupyterServer {
     this._info.serverEnvVars = wsSettings.getValue(SettingType.serverEnvVars);
   }
 
+  private _crumble?: CrumbleCracker;
+
+  public openDesktop(): Promise<void> {
+    if (!this._crumble) {
+      return Promise.reject(
+        new Error('Native desktop requires CrumbleCracker')
+      );
+    }
+    return this._crumble.openDesktop();
+  }
+
+  private async _startCrumbleCracker(
+    port?: number
+  ): Promise<JupyterServer.IInfo> {
+    if (this._info.serverArgs || this._info.overrideDefaultServerArgs) {
+      throw new Error(
+        'Custom shell launch arguments are not supported by CrumbleCracker'
+      );
+    }
+    this._info.engine = EngineType.CrumbleCracker;
+    const config = Config.loadConfig(path.join(__dirname, '..'));
+    const binary =
+      process.env.NEURODESK_CC_BINARY ||
+      path.join(
+        process.resourcesPath,
+        'crumblecracker',
+        process.platform === 'win32' ? 'NeurodeskAppX.exe' : 'NeurodeskAppX'
+      );
+    if (!fs.existsSync(binary)) {
+      throw new Error(
+        'CrumbleCracker binary is missing. Install a bundled app or set NEURODESK_CC_BINARY for development.'
+      );
+    }
+    const name =
+      'workspace-' +
+      createHash('sha256')
+        .update(path.resolve(this._info.workingDirectory))
+        .digest('hex')
+        .slice(0, 24);
+    const cache = path.join(getUserDataDir(), 'crumblecracker', name);
+    fs.mkdirSync(cache, { recursive: true });
+    this._crumble = new CrumbleCracker({ binary, cache });
+    this._info.port = port || this._options.port || (await getFreePort());
+    const result = await this._crumble.start(
+      {
+        image:
+          process.env.NEURODESK_CC_IMAGE ||
+          `vnmd/neurodesktop:${config.ConfigToml.jupyter_neurodesk_version}`,
+        name,
+        port: this._info.port,
+        storage:
+          userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
+          path.join(os.homedir(), 'neurodesktop-storage'),
+        directory: this._info.workingDirectory,
+        gpu: userSettings.getValue(SettingType.gpuAcceleration),
+        cvmfs: process.env.NEURODESK_CC_CVMFS !== '0',
+        env: this._info.serverEnvVars
+      },
+      phase =>
+        this._progressView?.setChildProcessLog(`CrumbleCracker: ${phase}\n`)
+    );
+    this._info.token = result.token;
+    this._info.url = new URL(result.url);
+    this._info.url.searchParams.set('token', result.token);
+    return this._info;
+  }
+
   get info(): JupyterServer.IInfo {
     return this._info;
   }
@@ -689,6 +667,13 @@ export class JupyterServer {
    */
   public start(port?: number, token?: string): Promise<JupyterServer.IInfo> {
     if (this._startServer) {
+      return this._startServer;
+    }
+    if (
+      this._info.engine === EngineType.CrumbleCracker ||
+      this._info.engine === EngineType.TinyRange
+    ) {
+      this._startServer = this._startCrumbleCracker(port);
       return this._startServer;
     }
     let started = false;
@@ -715,7 +700,6 @@ export class JupyterServer {
           `http://127.0.0.1:${this._info.port}/lab?token=${this._info.token}`
         );
 
-        log.debug('token', this._info.token);
         log.info(`ServerApp.port=${this._info.port}`);
 
         const {
@@ -921,79 +905,23 @@ export class JupyterServer {
    * @return a promise that is resolved when the server has stopped.
    */
   public stop(): Promise<void> {
+    if (this._crumble) {
+      return this._crumble.stop();
+    }
     // If stop has already been initiated, just return the promise
     if (this._stopServer) {
       return this._stopServer;
     }
     this._stopping = true;
 
-    this._stopServer = new Promise<void>((resolve, reject) => {
+    this._stopServer = (async () => {
       if (this._nbServer !== undefined) {
-        if (process.platform === 'win32') {
-          if (this._info.engine !== EngineType.TinyRange) {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: 'cmd.exe'
-            });
-          } else {
-            execFile('taskkill', ['/IM', 'tinyrange.exe', '/T', '/F'], {
-              shell: 'cmd.exe'
-            });
-            execFile(
-              'taskkill',
-              ['/IM', 'qemu-system-x86_64.exe', '/T', '/F'],
-              {
-                shell: 'cmd.exe'
-              }
-            );
-          }
-          execFile(
-            'taskkill',
-            ['/PID', String(this._nbServer.pid), '/T', '/F'],
-            {
-              shell: 'cmd.exe'
-            }
-          );
-          if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
-            resolve();
-          } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
-          }
-        } else {
-          if (this._info.engine === EngineType.TinyRange) {
-            // Kill tinyrange and any QEMU processes it spawned
-            execFile(
-              `killall tinyrange 2>/dev/null; killall tinyrange_qemu 2>/dev/null; killall qemu-system-x86_64 2>/dev/null; killall qemu-system-aarch64 2>/dev/null`,
-              { shell: '/bin/bash' }
-            );
-          } else {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: '/bin/bash'
-            });
-          }
-          this._nbServer.kill();
-          if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
-            resolve();
-          } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
-          }
-        }
-      } else {
-        this._stopping = false;
-        resolve();
+        execFile(this._info.engine, ['rm', '-f', this._info.containerName]);
+        this._nbServer.kill();
+        await this._shutdownServer();
       }
-    });
+      this._stopping = false;
+    })();
     return this._stopServer;
   }
 

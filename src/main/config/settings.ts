@@ -17,6 +17,8 @@ export enum ThemeType {
 export enum EngineType {
   Docker = 'docker',
   Podman = 'podman',
+  CrumbleCracker = 'crumblecracker',
+  /** Legacy persisted value, migrated on read. */
   TinyRange = 'tinyrange'
 }
 
@@ -62,6 +64,7 @@ export enum SettingType {
   overrideDefaultServerArgs = 'overrideDefaultServerArgs',
   serverEnvVars = 'serverEnvVars',
   engineType = 'engineType',
+  gpuAcceleration = 'gpuAcceleration',
   startupMode = 'startupMode',
 
   ctrlWBehavior = 'ctrlWBehavior',
@@ -150,6 +153,7 @@ export class UserSettings {
       }),
       serverEnvVars: new Setting<KeyValueMap>({}, { wsOverridable: true }),
       engineType: new Setting<EngineType>(EngineType.Docker),
+      gpuAcceleration: new Setting<boolean>(false),
       startupMode: new Setting<StartupMode>(StartupMode.WelcomePage),
       cvmfsMode: new Setting<CvmfsMode>(CvmfsMode.Stream),
       ctrlWBehavior: new Setting<CtrlWBehavior>(CtrlWBehavior.CloseTab),
@@ -181,7 +185,10 @@ export class UserSettings {
     for (let key in SettingType) {
       if (key in jsonData) {
         const setting = this._settings[key];
-        setting.value = jsonData[key];
+        setting.value =
+          key === SettingType.engineType && jsonData[key] === 'tinyrange'
+            ? EngineType.CrumbleCracker
+            : jsonData[key];
       }
     }
   }

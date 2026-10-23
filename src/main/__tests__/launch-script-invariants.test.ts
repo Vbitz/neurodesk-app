@@ -33,7 +33,6 @@ function baseParams(
     workingDirectory: '',
     cvmfsMode: 'false',
     overrideDefaultServerArgs: false,
-    tinyrangePath: '/usr/local/bin/tinyrange',
     osVersion: '2404',
     containerName: 'neurodeskapp',
     ...overrides
@@ -41,7 +40,7 @@ function baseParams(
 }
 
 const PLATFORMS = ['linux', 'darwin', 'win32'];
-const ENGINES = [EngineType.Docker, EngineType.Podman, EngineType.TinyRange];
+const ENGINES = [EngineType.Docker, EngineType.Podman];
 
 /** Every (platform, engine) pair, in both "no working dir" and "working dir" shapes. */
 const MATRIX: Array<[string, EngineType, string]> = [];
@@ -147,7 +146,6 @@ describe('launch script invariants', () => {
           workingDirectory: '',
           cvmfsMode: 'false',
           overrideDefaultServerArgs: false,
-          tinyrangePath: '/usr/local/bin/tinyrange',
           osVersion: '2404'
         });
         expect(script).not.toContain('undefined');
@@ -232,9 +230,6 @@ describe('launch script invariants', () => {
       expect(
         generateLaunchScript(baseParams({ engineType: EngineType.Podman }))
       ).toContain('OLLAMA_HOST');
-      expect(
-        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
-      ).not.toContain('OLLAMA_HOST');
     });
 
     it('passes NB_UID/NB_GID to Docker/Podman only', () => {
@@ -242,9 +237,6 @@ describe('launch script invariants', () => {
       expect(
         generateLaunchScript(baseParams({ engineType: EngineType.Docker }))
       ).toContain('-e NB_UID=');
-      expect(
-        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
-      ).not.toContain('-e NB_UID=');
     });
   });
 
