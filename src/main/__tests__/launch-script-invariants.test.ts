@@ -63,7 +63,7 @@ function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
 const IMAGE = `docker.io/vnmd/neurodesktop:${TAG}`;
 
 const PLATFORMS = ['linux', 'darwin', 'win32'];
-const ENGINES = [EngineType.Docker, EngineType.Podman, EngineType.TinyRange];
+const ENGINES = [EngineType.Docker, EngineType.Podman];
 
 /** Every (platform, engine) pair, with and without a /data mount. */
 const MATRIX: Array<[string, EngineType, string]> = [];
@@ -296,9 +296,6 @@ describe('launch script invariants', () => {
       expect(
         generateLaunchScript(baseParams({ engineType: EngineType.Podman }))
       ).toContain('OLLAMA_HOST');
-      expect(
-        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
-      ).not.toContain('OLLAMA_HOST');
     });
 
     it('passes NB_UID/NB_GID to Docker/Podman only', () => {
@@ -306,9 +303,6 @@ describe('launch script invariants', () => {
       expect(
         generateLaunchScript(baseParams({ engineType: EngineType.Docker }))
       ).toContain('-e NB_UID=');
-      expect(
-        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
-      ).not.toContain('-e NB_UID=');
     });
   });
 

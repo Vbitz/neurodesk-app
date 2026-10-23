@@ -35,6 +35,8 @@ export enum EventTypeMain {
   SetStorageDirectory = 'set-storage-directory',
   ValidateRemoteServerUrl = 'validate-remote-server-url',
   SetEngineType = 'set-engine-type',
+  SetGPUAcceleration = 'set-gpu-acceleration',
+  OpenNativeDesktop = 'open-native-desktop',
   SetStartupMode = 'set-startup-mode',
   SetCvmfsMode = 'set-cvmfs-mode',
   SetSyncJupyterLabTheme = 'set-sync-jupyterlab-theme',

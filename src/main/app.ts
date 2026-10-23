@@ -387,6 +387,7 @@ export class JupyterApplication implements IApplication, IDisposable {
     const dialog = new SettingsDialog({
       isDarkTheme: this._isDarkTheme,
       engineType: settings.getValue(SettingType.engineType),
+      gpuAcceleration: settings.getValue(SettingType.gpuAcceleration),
       startupMode: settings.getValue(SettingType.startupMode),
       cvmfsMode: settings.getValue(SettingType.cvmfsMode),
       theme: settings.getValue(SettingType.theme),
@@ -714,6 +715,14 @@ export class JupyterApplication implements IApplication, IDisposable {
       }
     );
 
+    this._evm.registerEventHandler(
+      EventTypeMain.SetGPUAcceleration,
+      (_event, enabled) => {
+        if (typeof enabled === 'boolean') {
+          userSettings.setValue(SettingType.gpuAcceleration, enabled);
+        }
+      }
+    );
     this._evm.registerEventHandler(
       EventTypeMain.SetEngineType,
       (_event, mode) => {

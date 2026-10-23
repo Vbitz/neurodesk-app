@@ -83,10 +83,8 @@ describe('YAML storage mount', () => {
   it.each([
     ['linux', EngineType.Docker],
     ['linux', EngineType.Podman],
-    ['linux', EngineType.TinyRange],
     ['win32', EngineType.Docker],
-    ['win32', EngineType.Podman],
-    ['win32', EngineType.TinyRange]
+    ['win32', EngineType.Podman]
   ])('%s / %s uses the configured mount', (platform, engineType) => {
     const params = baseParams({
       platform,
@@ -100,9 +98,6 @@ describe('YAML storage mount', () => {
     expect(script).toContain(`${hostPath}:/app-storage`);
     expect(script).toContain('-e NEURODESK_STORAGE_MOUNT=app-storage');
     expect(script).not.toContain(':/neurodesktop-storage');
-    if (engineType === EngineType.TinyRange) {
-      expect(script).toContain('chmod -R 777 /app-storage');
-    }
   });
 
   it('keeps a custom host directory and uses the configured container target', () => {
@@ -361,68 +356,12 @@ describe('generateLaunchScript', () => {
     });
   });
 
-  // ── TinyRange tests ──
-
-  describe('TinyRange engine', () => {
-    it('uses tinyrange login command', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          tinyrangePath: '/opt/tinyrange/tinyrange'
-        })
-      );
-      expect(script).toContain('/opt/tinyrange/tinyrange login');
-    });
-
-    it('includes --forward with port', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          port: 7777
-        })
-      );
-      expect(script).toContain('--forward 7777');
-    });
-
-    it('includes --mount-rw for neurodesktop-storage', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange
-        })
-      );
-      expect(script).toContain(
-        '--mount-rw ~/neurodesktop-storage:/neurodesktop-storage'
-      );
-    });
-
-    it('includes --auto-scale', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange
-        })
-      );
-      expect(script).toContain('--auto-scale');
-    });
-
-    it('does not include docker/podman run command', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange
-        })
-      );
-      expect(script).not.toContain('docker run');
-      expect(script).not.toContain('podman run');
-    });
-
-    it('includes -E with env vars and fuse chmod when not overriding args', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          overrideDefaultServerArgs: false
-        })
-      );
-      expect(script).toContain('chmod 777 /dev/fuse');
-    });
+  it('rejects native engines instead of generating a shell command', () => {
+    expect(() =>
+      generateLaunchScript(
+        baseParams({ engineType: EngineType.CrumbleCracker })
+      )
+    ).toThrow('CrumbleCracker API');
   });
 
   // ── Working directory tests ──
@@ -439,21 +378,7 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('--volume');
     });
 
-    it('adds --mount-rw for /data when using TinyRange', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          additionalDirectory: '/tmp'
-        })
-      );
-      expect(script).toContain(':/data');
-      expect(script).toContain('--mount-rw');
-    });
-
     it('mounts exactly the directory it is given', () => {
-      // generateLaunchScript is pure: existence checking and resolution are
-      // the caller's job (createLaunchScript runs resolveWorkingDirectory),
-      // so whatever arrives here is mounted verbatim.
       const script = generateLaunchScript(
         baseParams({
           additionalDirectory: '/mnt/scratch/project one'
@@ -469,18 +394,6 @@ describe('generateLaunchScript', () => {
         })
       );
       expect(script).not.toContain(':/data');
-    });
-
-    it('uses --mount-rw for TinyRange working dir on windows', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          platform: 'win32',
-          additionalDirectory: '/tmp'
-        })
-      );
-      expect(script).toContain('--mount-rw');
-      expect(script).toContain(':/data');
     });
   });
 
@@ -525,20 +438,6 @@ describe('generateLaunchScript', () => {
       expect(script).toContain(':/data');
       const volumeMounts = script.match(/--volume\s+"[^"]+":"[^"]+"/g) || [];
       expect(volumeMounts.length).toBe(0);
-    });
-
-    it('does not mount native path for TinyRange even with NFS', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          additionalDirectory: '/tmp',
-          isNfsAdditionalDirectory: true
-        })
-      );
-      expect(script).toContain(':/data');
-      const nativeVolumeMounts =
-        script.match(/--volume\s+"[^"]+":"[^"]+"/g) || [];
-      expect(nativeVolumeMounts.length).toBe(0);
     });
 
     it('includes NFS mount pre-check for NFS + Docker', () => {
@@ -644,32 +543,6 @@ describe('generateLaunchScript', () => {
       expect(script).not.toContain('~/neurodesktop-storage');
     });
 
-    it('uses custom storageDirectory for TinyRange mount', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          storageDirectory: '/mnt/data/nd-storage'
-        })
-      );
-      expect(script).toContain(
-        '--mount-rw /mnt/data/nd-storage:/neurodesktop-storage'
-      );
-      expect(script).not.toContain('~/neurodesktop-storage');
-    });
-
-    it('normalizes Windows paths for TinyRange', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          platform: 'win32',
-          storageDirectory: 'D:\\neurodata\\storage'
-        })
-      );
-      expect(script).toContain(
-        '--mount-rw D://neurodata//storage:/neurodesktop-storage'
-      );
-    });
-
     it('uses custom storageDirectory for Podman mount', () => {
       const script = generateLaunchScript(
         baseParams({
@@ -745,107 +618,6 @@ describe('generateLaunchScript', () => {
         '--add-host=host.docker.internal:!HOST_GATEWAY_IP!'
       );
     });
-
-    it('emits no gateway resolution for TinyRange', () => {
-      for (const platform of ['linux', 'darwin', 'win32']) {
-        const script = generateLaunchScript(
-          baseParams({ engineType: EngineType.TinyRange, platform })
-        );
-        expect(script).not.toContain('HOST_GATEWAY_IP');
-        expect(script).not.toContain('--add-host');
-      }
-    });
-  });
-
-  // ── TinyRange /data permissions ──
-  //
-  // TinyRange mounts the working directory as root, so the jovyan user cannot
-  // write to it until the -E prelude fixes ownership. -maxdepth 1 keeps this
-  // bounded — a recursive chown over a large working dir stalls startup.
-
-  describe('TinyRange /data permissions', () => {
-    it('fixes ownership and mode of /data when a working dir is mounted', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          additionalDirectory: '/tmp'
-        })
-      );
-      expect(script).toContain('find /data -maxdepth 1 -exec chown');
-      expect(script).toContain('find /data -maxdepth 1 -exec chmod 777');
-      // Failures must not abort the prelude — the mount may be read-only.
-      expect(script).toContain('2>/dev/null || true');
-    });
-
-    it('omits the /data fixups when no working dir is mounted', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          additionalDirectory: ''
-        })
-      );
-      expect(script).not.toContain('/data');
-    });
-
-    it('omits the /data fixups when default server args are overridden', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          additionalDirectory: '/tmp',
-          overrideDefaultServerArgs: true
-        })
-      );
-      expect(script).not.toContain('find /data');
-    });
-
-    it('always fixes /neurodesktop-storage ownership', () => {
-      const script = generateLaunchScript(
-        baseParams({ engineType: EngineType.TinyRange })
-      );
-      expect(script).toContain('chown -R');
-      expect(script).toContain('chmod -R 777 /neurodesktop-storage');
-    });
-  });
-
-  // ── TinyRange ownership IDs per platform ──
-  //
-  // `id -u` / `id -g` do not exist on Windows, so the uid/gid must be the
-  // literal 1000:1000 there. Emitting the shell substitution on Windows makes
-  // chown fail and leaves the mounts root-owned.
-
-  describe('TinyRange uid/gid per platform', () => {
-    it('uses literal 1000:1000 on Windows', () => {
-      const script = generateLaunchScript(
-        baseParams({
-          engineType: EngineType.TinyRange,
-          platform: 'win32',
-          // Must exist on the machine running the test — generateLaunchScript
-          // statSyncs the working dir before mounting it.
-          additionalDirectory: '/tmp'
-        })
-      );
-      expect(script).toContain('chown -R 1000:1000 /neurodesktop-storage');
-      expect(script).toContain('-exec chown 1000:1000 {} +');
-      expect(script).not.toContain('id -u');
-      expect(script).not.toContain('id -g');
-    });
-
-    it('uses $(id -u)/$(id -g) on Linux and macOS', () => {
-      for (const platform of ['linux', 'darwin']) {
-        const script = generateLaunchScript(
-          baseParams({
-            engineType: EngineType.TinyRange,
-            platform,
-            additionalDirectory: '/tmp'
-          })
-        );
-        expect(script).toContain(
-          'chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage'
-        );
-        expect(script).toContain('-exec chown "$(id -u)":"$(id -g)" {} +');
-        expect(script).not.toContain('1000:1000');
-      }
-    });
   });
 
   // ── Home volume permission fix ──
@@ -886,13 +658,6 @@ describe('generateLaunchScript', () => {
       expect(script.indexOf('--entrypoint chown')).toBeLessThan(
         script.indexOf('CONTAINER_ID=')
       );
-    });
-
-    it('is skipped for TinyRange (no shared home volume)', () => {
-      const script = generateLaunchScript(
-        baseParams({ engineType: EngineType.TinyRange })
-      );
-      expect(script).not.toContain('--entrypoint chown');
     });
   });
 });

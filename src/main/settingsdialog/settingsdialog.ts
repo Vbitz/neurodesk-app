@@ -34,6 +34,7 @@ export class SettingsDialog {
 
     const {
       engineType,
+      gpuAcceleration,
       startupMode,
       cvmfsMode,
       theme,
@@ -207,9 +208,12 @@ export class SettingsDialog {
                 <label slot="label">Engine Options</label>
                 <jp-radio name="engine-type" value="docker" <%= engineType === 'docker' ? 'checked' : '' %>>Docker</jp-radio>
                 <jp-radio name="engine-type" value="podman" <%= engineType === 'podman' ? 'checked' : '' %>>Podman</jp-radio>
-                <jp-radio name="engine-type" value="tinyrange" <%= engineType === 'tinyrange' ? 'checked' : '' %>>TinyRange</jp-radio>
+                <jp-radio name="engine-type" value="crumblecracker" <%= engineType === 'crumblecracker' ? 'checked' : '' %>>CrumbleCracker</jp-radio>
                 </jp-radio-group>
 
+              <jp-checkbox id="gpu-acceleration" <%= gpuAcceleration ? 'checked' : '' %>>
+                GPU-accelerated native desktop (CrumbleCracker, Apple Silicon; next session)
+              </jp-checkbox>
               <jp-radio-group orientation="horizontal">
                 <label slot="label">On startup</label>
                 <jp-radio name="startup-mode" value="welcome-page" <%= startupMode === 'welcome-page' ? 'checked' : '' %>>Show welcome page</jp-radio>
@@ -426,6 +430,7 @@ export class SettingsDialog {
         function handleApply() {
           const engineType = document.querySelector('jp-radio[name="engine-type"].checked').value;
           window.electronAPI.setEngineType(engineType);
+          window.electronAPI.setGPUAcceleration(document.getElementById("gpu-acceleration").checked);
           const startupMode = document.querySelector('jp-radio[name="startup-mode"].checked').value;
           window.electronAPI.setStartupMode(startupMode);
           const cvmfsMode = document.querySelector('jp-radio[name="cvmfs-mode"].checked').value;
@@ -465,6 +470,7 @@ export class SettingsDialog {
     `;
     this._pageBody = ejs.render(template, {
       engineType,
+      gpuAcceleration,
       startupMode,
       cvmfsMode,
       theme,
@@ -512,6 +518,7 @@ export namespace SettingsDialog {
   export interface IOptions {
     isDarkTheme: boolean;
     engineType: EngineType;
+    gpuAcceleration: boolean;
     startupMode: StartupMode;
     cvmfsMode: CvmfsMode;
     theme: ThemeType;

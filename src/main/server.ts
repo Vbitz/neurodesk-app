@@ -1,3 +1,4 @@
+import { CrumbleCracker } from './crumblecracker';
 import { ChildProcess, execFile, execSync } from 'child_process';
 import { dialog } from 'electron';
 import { ArrayExt } from '@lumino/algorithm';
@@ -19,7 +20,7 @@ import {
   userSettings,
   WorkspaceSettings
 } from './config/settings';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { ProgressView } from './progressview/progressview';
 import {
   ContainerConfigParser,
@@ -122,8 +123,7 @@ export function resolveContainerName(
   name: string
 ): string {
   const containerName = name;
-  const isTinyRange = engineType === EngineType.TinyRange;
-  if (isTinyRange) {
+  if (engineType !== EngineType.Docker && engineType !== EngineType.Podman) {
     return containerName;
   }
 
@@ -157,6 +157,11 @@ export function resolveContainerName(
  * Exported for testing.
  */
 export function generateLaunchScript(params: ILaunchScriptParams): string {
+  if (![EngineType.Docker, EngineType.Podman].includes(params.engineType)) {
+    throw new Error(
+      'Native backends use the CrumbleCracker API, not launch scripts'
+    );
+  }
   const {
     parser,
     engineType,
@@ -175,7 +180,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isWin = platform === 'win32';
   const isLinux = platform === 'linux';
   const platformType: PlatformType = isWin ? 'windows' : 'unix';
-  const isTinyRange = engineType === EngineType.TinyRange;
   const isPodman = engineType === EngineType.Podman;
   const strPort = port.toString();
 
@@ -198,9 +202,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     ? additionalDirectory.replace(/\\/g, '/')
     : additionalDirectory;
 
-  // Docker and Podman publish the host port onto the container's fixed
-  // Jupyter port; TinyRange forwards the host port and serves on it directly.
-  const serverPort = isTinyRange ? strPort : parser.getContainerPort();
+  // Docker and Podman publish onto the configured container port.
+  const serverPort = parser.getContainerPort();
 
   const context: VariableContext = {
     port: strPort,
@@ -234,9 +237,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
   // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
-  const fixPermissionsCmd = isTinyRange
-    ? ''
-    : isWin
+  const fixPermissionsCmd = isWin
     ? `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageName} -R 1000:100 /home/jovyan >NUL 2>NUL`
     : `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageName} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
@@ -247,8 +248,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       }${engineType} rm -f ${containerName} &> /dev/null`;
   const stopCmd = isPodman
     ? removeCmd
-    : isTinyRange
-    ? ''
     : isWin
     ? `${engineType} rm -f ${containerName} >NUL 2>&1`
     : `${
@@ -261,9 +260,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // Podman only added 'host-gateway' support in v4.1.0.
   // On macOS/Windows, Podman runs in a VM so host-gateway does not reliably resolve to the host.
   // We always resolve the actual gateway IP for Podman on macOS/Windows.
-  const hostGatewayResolveWin = isTinyRange
-    ? ''
-    : `
+  const hostGatewayResolveWin = `
         SET HOST_GATEWAY_IP=host-gateway
         ${
           isPodman
@@ -273,9 +270,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
             : ''
         }`;
 
-  const hostGatewayResolveUnix = isTinyRange
-    ? ''
-    : `
+  const hostGatewayResolveUnix = `
         HOST_GATEWAY_IP="host-gateway"
         ${
           isPodman
@@ -295,13 +290,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         }`;
 
   if (isWin) {
-    if (isTinyRange) {
-      script = `
-        setlocal enabledelayedexpansion
-        ${launchCmd}
-      `;
-    } else {
-      script = `
+    script = `
         setlocal enabledelayedexpansion
         SET ERRORCODE=0
         SET IMAGE_EXISTS=
@@ -328,15 +317,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         )
         ${engineType} logs -f ${containerName}
       `;
-    }
   } else {
-    if (isTinyRange) {
-      script = `
-        umask 000
-        ${launchCmd}
-        `;
-    } else {
-      script = `
+    script = `
         ${hostGatewayResolveUnix}
         echo $HOST_GATEWAY_IP
         echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
@@ -406,7 +388,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           ${engineType} logs -f ${containerName} 2>&1
         fi
         `;
-    }
   }
 
   return script;
@@ -435,15 +416,6 @@ function getHostOsVersion(): string {
   }
 }
 
-function resolveTinyrangePath(isWin: boolean): string {
-  const isDev = process.env.NODE_ENV === 'development';
-  const binary = isWin ? 'tinyrange.exe' : 'tinyrange';
-  return (isDev
-    ? path.join(__dirname, '../../..', 'tinyrange', binary)
-    : path.join(process.resourcesPath, 'app', 'tinyrange', binary)
-  ).replace(/\\/g, '/');
-}
-
 /**
  * Resolve the host-side inputs (settings, paths, OS probing), hand them to
  * generateLaunchScript and write the result to a temp file.
@@ -457,7 +429,6 @@ function createLaunchScript(
   imageVersion?: string
 ): { scriptPath: string; containerName: string } {
   const isWin = process.platform === 'win32';
-  const isTinyRange = engineType === EngineType.TinyRange;
 
   const baseContainerConfigPath = path.join(
     __dirname,
@@ -498,19 +469,7 @@ function createLaunchScript(
     }
   }
 
-  if (isTinyRange) {
-    const buildDir = path.join(storageDirectory, 'build');
-    if (fs.existsSync(buildDir)) {
-      fs.rmSync(path.join(buildDir, 'persist'), {
-        recursive: true,
-        force: true
-      });
-      log.info(`Removed TinyRange buildDir due to port change: ${buildDir}`);
-    }
-  }
-
-  // The "additional working directory" setting is the only host directory
-  // mounted into the container (at /data).
+  // Only the configured additional directory is mounted at /data.
   let additionalDirectory = '';
   if (serverInfo.serverArgs) {
     additionalDirectory = resolveWorkingDirectory(serverInfo.serverArgs);
@@ -546,7 +505,7 @@ function createLaunchScript(
     token,
     cvmfsMode: serverInfo.cvmfsMode.toString(),
     osVersion: getHostOsVersion(),
-    tinyrangePath: resolveTinyrangePath(isWin),
+    tinyrangePath: '',
     storageDirectory,
     additionalDirectory,
     isNfsAdditionalDirectory,
@@ -556,7 +515,7 @@ function createLaunchScript(
   const ext = isWin ? 'bat' : 'sh';
   const scriptPath = createTempFile(`launch.${ext}`, script);
 
-  log.info(`Server launch script:\n${script}`);
+  log.info(`Server launch script created for ${engineType}`);
 
   if (!isWin) {
     fs.chmodSync(scriptPath, 0o755);
@@ -634,6 +593,97 @@ export class JupyterServer {
     this._info.serverEnvVars = wsSettings.getValue(SettingType.serverEnvVars);
   }
 
+  private _crumble?: CrumbleCracker;
+
+  public openDesktop(): Promise<void> {
+    if (!this._crumble) {
+      return Promise.reject(
+        new Error('Native desktop requires CrumbleCracker')
+      );
+    }
+    return this._crumble.openDesktop();
+  }
+
+  private async _startCrumbleCracker(
+    port?: number
+  ): Promise<JupyterServer.IInfo> {
+    if (this._info.overrideDefaultServerArgs) {
+      throw new Error(
+        'Custom shell launch arguments are not supported by CrumbleCracker'
+      );
+    }
+    this._info.engine = EngineType.CrumbleCracker;
+    if (!this._info.containerConfigName) {
+      throw new Error('containerConfigName is required to launch a session');
+    }
+    const config = new ContainerConfigParser(
+      path.join(__dirname, 'config/baseContainerConfig.yml'),
+      path.join(
+        __dirname,
+        '../container_installer',
+        this._info.containerConfigName + '.yml'
+      ),
+      this._info.imageVersion
+    );
+    if (!config.isValid) {
+      throw new Error(
+        `Invalid container config: ${this._info.containerConfigName}`
+      );
+    }
+    if (config.getDefaultStorageMount() !== 'neurodesktop-storage') {
+      throw new Error(
+        'CrumbleCracker requires the neurodesktop-storage guest mount'
+      );
+    }
+    const binary =
+      process.env.NEURODESK_CC_BINARY ||
+      path.join(
+        process.resourcesPath,
+        'crumblecracker',
+        process.platform === 'win32' ? 'NeurodeskAppX.exe' : 'NeurodeskAppX'
+      );
+    if (!fs.existsSync(binary)) {
+      throw new Error(
+        'CrumbleCracker binary is missing. Install a bundled app or set NEURODESK_CC_BINARY for development.'
+      );
+    }
+    const name =
+      'workspace-' +
+      createHash('sha256')
+        .update(path.resolve(this._info.workingDirectory))
+        .digest('hex')
+        .slice(0, 24);
+    const cache = path.join(getUserDataDir(), 'crumblecracker', name);
+    fs.mkdirSync(cache, { recursive: true });
+    this._crumble = new CrumbleCracker({ binary, cache });
+    this._info.port = port || this._options.port || (await getFreePort());
+    const result = await this._crumble.start(
+      {
+        image: process.env.NEURODESK_CC_IMAGE || config.getImageName(),
+        name,
+        port: this._info.port,
+        storage:
+          userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
+          getDefaultStorageDirectory(
+            process.platform,
+            config.getDefaultStorageMount()
+          ),
+        directory: this._info.serverArgs
+          ? resolveWorkingDirectory(this._info.serverArgs)
+          : '',
+        gpu: userSettings.getValue(SettingType.gpuAcceleration),
+        cvmfs: process.env.NEURODESK_CC_CVMFS !== '0',
+        env: this._info.serverEnvVars
+      },
+      phase =>
+        this._progressView?.setChildProcessLog(`CrumbleCracker: ${phase}\n`)
+    );
+    this._info.token = result.token;
+    this._info.url = new URL(result.url);
+    this._info.url.searchParams.set('token', result.token);
+    return this._info;
+  }
+
   get info(): JupyterServer.IInfo {
     return this._info;
   }
@@ -646,6 +696,13 @@ export class JupyterServer {
    */
   public start(port?: number, token?: string): Promise<JupyterServer.IInfo> {
     if (this._startServer) {
+      return this._startServer;
+    }
+    if (
+      this._info.engine === EngineType.CrumbleCracker ||
+      this._info.engine === EngineType.TinyRange
+    ) {
+      this._startServer = this._startCrumbleCracker(port);
       return this._startServer;
     }
     let started = false;
@@ -672,7 +729,6 @@ export class JupyterServer {
           `http://127.0.0.1:${this._info.port}/lab?token=${this._info.token}`
         );
 
-        log.debug('token', this._info.token);
         log.info(`ServerApp.port=${this._info.port}`);
 
         if (!this._info.containerConfigName) {
@@ -889,79 +945,23 @@ export class JupyterServer {
    * @return a promise that is resolved when the server has stopped.
    */
   public stop(): Promise<void> {
+    if (this._crumble) {
+      return this._crumble.stop();
+    }
     // If stop has already been initiated, just return the promise
     if (this._stopServer) {
       return this._stopServer;
     }
     this._stopping = true;
 
-    this._stopServer = new Promise<void>((resolve, reject) => {
+    this._stopServer = (async () => {
       if (this._nbServer !== undefined) {
-        if (process.platform === 'win32') {
-          if (this._info.engine !== EngineType.TinyRange) {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: 'cmd.exe'
-            });
-          } else {
-            execFile('taskkill', ['/IM', 'tinyrange.exe', '/T', '/F'], {
-              shell: 'cmd.exe'
-            });
-            execFile(
-              'taskkill',
-              ['/IM', 'qemu-system-x86_64.exe', '/T', '/F'],
-              {
-                shell: 'cmd.exe'
-              }
-            );
-          }
-          execFile(
-            'taskkill',
-            ['/PID', String(this._nbServer.pid), '/T', '/F'],
-            {
-              shell: 'cmd.exe'
-            }
-          );
-          if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
-            resolve();
-          } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
-          }
-        } else {
-          if (this._info.engine === EngineType.TinyRange) {
-            // Kill tinyrange and any QEMU processes it spawned
-            execFile(
-              `killall tinyrange 2>/dev/null; killall tinyrange_qemu 2>/dev/null; killall qemu-system-x86_64 2>/dev/null; killall qemu-system-aarch64 2>/dev/null`,
-              { shell: '/bin/bash' }
-            );
-          } else {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: '/bin/bash'
-            });
-          }
-          this._nbServer.kill();
-          if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
-            resolve();
-          } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
-          }
-        }
-      } else {
-        this._stopping = false;
-        resolve();
+        execFile(this._info.engine, ['rm', '-f', this._info.containerName]);
+        this._nbServer.kill();
+        await this._shutdownServer();
       }
-    });
+      this._stopping = false;
+    })();
     return this._stopServer;
   }
 
