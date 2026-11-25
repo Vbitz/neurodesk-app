@@ -10,7 +10,7 @@ runs:
     - uses: actions/checkout@v6
       with:
         repository: tinyrange/crumblecracker
-        ref: 5201082ea65fc71920869c9a1c2e680ce9896e83
+        ref: 1ea7a77424b58c2888483457f6c12445a61159ea
         path: .backend-source
         persist-credentials: false
     - uses: actions/setup-go@v6
