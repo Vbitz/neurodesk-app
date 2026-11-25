@@ -42,6 +42,11 @@ test('starts authenticated Jupyter first, defers and coalesces desktop activatio
     expect(calls().some(call => call.path.endsWith('/glass'))).toBe(false);
     const vm = calls().find(call => call.path === '/v1/vms').body;
     expect(vm.display.gpu_acceleration).toBe(true);
+    expect(vm.home).toEqual(
+      process.platform === 'win32'
+        ? { mode: 'ephemeral' }
+        : { mode: 'persistent', id: options.name }
+    );
     expect(vm.jupyter.host_port).toBe(options.port);
     await Promise.all([client.openDesktop(), client.openDesktop()]);
     await client.openDesktop();
@@ -60,6 +65,20 @@ test('rejects a remote ready address and closes its own child without sending a 
     'Invalid CrumbleCracker ready'
   );
   expect(calls()).toEqual([{ eof: true }]);
+}, 15000);
+
+test('asks a capable backend to restore the existing desktop on a second click', async () => {
+  const client = launch('focus');
+  try {
+    await client.start(options);
+    await client.openDesktop();
+    await client.openDesktop();
+    const requests = calls().filter(call => call.path.endsWith('/glass'));
+    expect(requests).toHaveLength(2);
+    expect(requests.every(call => call.body.focus_if_open === true)).toBe(true);
+  } finally {
+    await client.stop();
+  }
 }, 15000);
 
 test('EOF cleans up when authenticated shutdown fails', async () => {
@@ -86,7 +105,15 @@ test('stop cancels a pending import without booting a VM', async () => {
 test('does not expose a host data share when none is configured', async () => {
   const client = launch();
   try {
-    await client.start({ ...options, directory: '' });
+    await client.start({
+      ...options,
+      directory: '',
+      gpu: undefined,
+      cvmfs: true
+    });
+    const vm = calls().find(call => call.path === '/v1/vms').body;
+    expect(vm.display).not.toHaveProperty('gpu_acceleration');
+    expect(vm.cvmfs.enabled).toBe(true);
     expect(calls().find(call => call.path === '/v1/vms').body.shares).toEqual(
       []
     );

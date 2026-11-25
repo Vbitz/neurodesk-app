@@ -106,6 +106,28 @@ test('legacy native settings use the API and an explicit candidate image overrid
   );
 });
 
+test('a new native session without a selected container uses the default Neurodesk image', async () => {
+  const server = new JupyterServer(
+    { workingDirectory: '/workspace', port: 18888 },
+    undefined
+  );
+  await server.start();
+  expect(ContainerConfigParser).toHaveBeenCalledWith(
+    expect.stringContaining('baseContainerConfig.yml'),
+    expect.stringContaining('neurodesk.yml'),
+    undefined
+  );
+  expect(start).toHaveBeenCalledWith(
+    expect.objectContaining({
+      image:
+        process.platform === 'win32'
+          ? 'ghcr.io/tinyrange/neurodesktop-glass:latest-estargz'
+          : expect.stringMatching(/^docker\.io\/vnmd\/neurodesktop:/)
+    }),
+    expect.any(Function)
+  );
+});
+
 test('rejects an unknown container configuration before spawning a backend', async () => {
   const server = new JupyterServer(
     {

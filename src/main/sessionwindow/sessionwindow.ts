@@ -33,10 +33,11 @@ import { IApplication } from '../app';
 import { SettingsDialog } from '../settingsdialog/settingsdialog';
 import { RemoteServerSelectDialog } from '../remoteserverselectdialog/remoteserverselectdialog';
 import { ProgressView } from '../progressview/progressview';
+import { loadingJupyter } from '../progressview/startup';
 import { appData } from '../config/appdata';
 import { SessionConfig } from '../config/sessionconfig';
 import { ISignal, Signal } from '@lumino/signaling';
-import { EventTypeMain } from '../eventtypes';
+import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
 import { EventManager } from '../eventmanager';
 import {
   captureLocalSessionStartup,
@@ -51,6 +52,7 @@ export enum ContentViewType {
 
 export interface IServerInfo {
   nativeDesktop?: boolean;
+  nativeDesktopStarting?: boolean;
   type: 'local' | 'remote';
   url?: string;
   persistSessionData?: boolean;
@@ -294,6 +296,11 @@ export class SessionWindow implements IDisposable {
     detail?: string,
     showAnimation?: boolean
   ) {
+    this._attachProgressView();
+    this._progressView.setProgress(title, detail, showAnimation !== false);
+  }
+
+  private _attachProgressView() {
     if (!this._progressViewVisible) {
       this._window.contentView.addChildView(this._progressView.view.view);
       this._progressViewVisible = true;
@@ -301,8 +308,6 @@ export class SessionWindow implements IDisposable {
     }
 
     this._resizeViews();
-
-    this._progressView.setProgress(title, detail, showAnimation !== false);
   }
 
   private _setProgress(title: string, detail: string, showAnimation: boolean) {
@@ -339,7 +344,15 @@ export class SessionWindow implements IDisposable {
       parent: this,
       sessionConfig: this._sessionConfig
     });
-    this._window.contentView.addChildView(labView.view);
+    const content = this._window.contentView;
+    const progressIndex = content.children.indexOf(
+      this._progressView.view.view
+    );
+    if (progressIndex < 0) {
+      content.addChildView(labView.view);
+    } else {
+      content.addChildView(labView.view, progressIndex);
+    }
     this._titleBarView.showServerStatus(true);
     // transfer focus to labView
     this._window.webContents.on('focus', () => {
@@ -470,13 +483,18 @@ export class SessionWindow implements IDisposable {
         const fromLab =
           event.sender === this._labView?.view.webContents &&
           new URL(event.sender.getURL()).origin === server.info.url.origin;
-        if (!fromTitlebar && !fromLab) {
+        if ((!fromTitlebar && !fromLab) || this._nativeDesktopStarting) {
           return;
         }
+        this._setNativeDesktopStarting(true);
         try {
           await server.openDesktop();
         } catch (error) {
-          dialog.showErrorBox('Could not open native desktop', String(error));
+          if (!this._window.isDestroyed()) {
+            dialog.showErrorBox('Could not open native desktop', String(error));
+          }
+        } finally {
+          this._setNativeDesktopStarting(false);
         }
       }
     );
@@ -559,7 +577,9 @@ export class SessionWindow implements IDisposable {
         this._updateSessionWindowPositionConfig();
         this._sessionConfigChanged.emit();
 
-        if (type === 'notebook') {
+        if (this._server?.server.info.engine === EngineType.CrumbleCracker) {
+          void this._finishCrumbleLabStartup();
+        } else if (type === 'notebook') {
           this.labView.labUIReady.then(() => {
             // this.labView.newNotebook();
             this._hideProgressView();
@@ -762,6 +782,7 @@ export class SessionWindow implements IDisposable {
         const serverInfo: IServerInfo = {
           type: 'local',
           nativeDesktop: info.engine === 'crumblecracker',
+          nativeDesktopStarting: this._nativeDesktopStarting,
           workingDirectory: info.workingDirectory,
           url: this._sessionConfig.url?.href
         };
@@ -979,13 +1000,52 @@ export class SessionWindow implements IDisposable {
     this._updateSessionWindowPositionConfig();
     this._sessionConfigChanged.emit();
 
-    if (filesToOpen) {
+    if (this._server?.server.info.engine === EngineType.CrumbleCracker) {
+      void this._finishCrumbleLabStartup(!!filesToOpen?.length);
+    } else if (filesToOpen?.length) {
       this.labView.labUIReady.then(() => {
         this.labView.openFiles();
         this._hideProgressView();
       });
     } else {
       this._hideProgressView();
+    }
+  }
+
+  private async _finishCrumbleLabStartup(openFiles = false) {
+    const lab = this._labView;
+    if (!lab) return;
+    this._progressView.setStartupProgress(loadingJupyter);
+    let status = await lab.waitForWorkspace(25000);
+    if (
+      this._labView === lab &&
+      !this._window.isDestroyed() &&
+      status === 'timeout'
+    ) {
+      this._progressView.setStartupProgress({
+        ...loadingJupyter,
+        title: 'Retrying JupyterLab',
+        detail: 'Reloading the workspace and its assets.'
+      });
+      lab.view.webContents.reloadIgnoringCache();
+      status = await lab.waitForWorkspace(25000);
+    }
+    if (this._labView !== lab || this._window.isDestroyed()) return;
+    if (status === 'ready') {
+      this._hideProgressView();
+      lab.view.webContents.invalidate();
+      if (openFiles) {
+        void lab.labUIReady.then(() => {
+          if (this._labView === lab) return lab.openFiles();
+        });
+      }
+    } else if (status === 'timeout') {
+      this._showProgressView(
+        'JupyterLab is taking too long to open',
+        `<div class="message-row">You can still open the native desktop from the title bar.</div>
+         <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowLogs}')">Show logs</a></div>`,
+        false
+      );
     }
   }
 
@@ -1093,6 +1153,17 @@ export class SessionWindow implements IDisposable {
   private _sessionConfigChanged = new Signal<this, void>(this);
   private _evm = new EventManager();
   private _engineType: EngineType;
+  private _nativeDesktopStarting = false;
+
+  private _setNativeDesktopStarting(starting: boolean) {
+    this._nativeDesktopStarting = starting;
+    for (const view of [this._titleBarView, this._labView]) {
+      const contents = view?.view.webContents;
+      if (contents && !contents.isDestroyed()) {
+        contents.send(EventTypeRenderer.NativeDesktopStarting, starting);
+      }
+    }
+  }
 }
 
 export namespace SessionWindow {

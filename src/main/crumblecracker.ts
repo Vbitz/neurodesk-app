@@ -1,6 +1,12 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import { request } from 'http';
+import {
+  imageProgress,
+  StartupProgress,
+  TransferProgress,
+  vmProgress
+} from './progressview/startup';
 
 export interface ICrumbleOptions {
   binary: string;
@@ -13,7 +19,7 @@ export interface ICrumbleStart {
   storage: string;
   directory: string;
   port: number;
-  gpu: boolean;
+  gpu?: boolean;
   cvmfs: boolean;
   memory?: number;
   cpus?: number;
@@ -26,6 +32,11 @@ interface IReady {
   base_url: string;
   token: string;
   pid: number;
+}
+
+interface IOperationProgress {
+  phase: string;
+  progress?: TransferProgress;
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const uuid = () => {
@@ -49,6 +60,7 @@ export class CrumbleCracker {
   private stopPromise?: Promise<void>;
   private vm?: string;
   private glassPromise?: Promise<void>;
+  private canFocusGlass = false;
 
   constructor(options: ICrumbleOptions) {
     this.child = spawn(
@@ -196,7 +208,10 @@ export class CrumbleCracker {
   private async operation(
     route: string,
     body: unknown,
-    progress: (phase: string) => void
+    options: {
+      progress?: (operation: IOperationProgress) => void;
+      allowCancellation?: boolean;
+    }
   ) {
     if (this.stopping) {
       throw new Error('CrumbleCracker stopped');
@@ -205,13 +220,16 @@ export class CrumbleCracker {
     const deadline = Date.now() + 40 * 60 * 1000;
     while (!this.stopping && Date.now() < deadline) {
       const op = await this.api(`/v1/operations/${accepted.operation_id}`);
-      progress(op.phase);
       if (op.state === 'succeeded') {
         return op.result;
+      }
+      if (op.state === 'cancelled' && options.allowCancellation) {
+        return;
       }
       if (op.state === 'failed' || op.state === 'cancelled') {
         throw new Error(`CrumbleCracker ${op.error?.code || op.state}`);
       }
+      options.progress?.(op);
       await delay(250);
     }
     throw new Error(
@@ -223,10 +241,11 @@ export class CrumbleCracker {
 
   async start(
     options: ICrumbleStart,
-    progress: (phase: string) => void = () => undefined
+    progress: (status: StartupProgress) => void = () => undefined
   ) {
     try {
       const info = await this.api('/v1/info');
+      this.canFocusGlass = info.capabilities.glass_focus === true;
       if (
         !info.capabilities.jupyter_first ||
         (options.gpu && !info.capabilities.gpu_acceleration)
@@ -243,8 +262,12 @@ export class CrumbleCracker {
           policy: 'if_missing',
           timeout_seconds: 1800
         },
-        progress
+        {
+          progress: operation =>
+            progress(imageProgress(operation.phase, operation.progress))
+        }
       );
+      progress(vmProgress('preparing_storage'));
       const result = await this.operation(
         '/v1/vms',
         {
@@ -253,7 +276,10 @@ export class CrumbleCracker {
           memory_mib: options.memory || 8192,
           cpus: options.cpus || 2,
           user: 'jovyan',
-          home: { mode: 'persistent', id: options.name },
+          home:
+            process.platform === 'win32'
+              ? { mode: 'ephemeral' }
+              : { mode: 'persistent', id: options.name },
           storage: { host_path: options.storage, create: true },
           shares: options.directory
             ? [
@@ -271,7 +297,7 @@ export class CrumbleCracker {
           env: options.env || {},
           boot_timeout_seconds: 600
         },
-        progress
+        { progress: operation => progress(vmProgress(operation.phase)) }
       );
       if (
         !result.jupyter ||
@@ -296,9 +322,11 @@ export class CrumbleCracker {
       if (!this.vm || this.stopping) {
         throw new Error('Start Jupyter before opening the desktop');
       }
-      const state = await this.api(`/v1/vms/${this.vm}`);
-      if (state.glass?.state === 'open') {
-        return;
+      if (!this.canFocusGlass) {
+        const state = await this.api(`/v1/vms/${this.vm}`);
+        if (state.glass?.state === 'open') {
+          return;
+        }
       }
       await this.operation(
         `/v1/vms/${this.vm}/glass`,
@@ -306,9 +334,10 @@ export class CrumbleCracker {
           title: 'Neurodesk Desktop',
           width: 1440,
           height: 900,
-          timeout_seconds: 180
+          timeout_seconds: 180,
+          focus_if_open: this.canFocusGlass ? true : undefined
         },
-        () => undefined
+        { allowCancellation: true }
       );
     })().finally(() => {
       this.glassPromise = undefined;

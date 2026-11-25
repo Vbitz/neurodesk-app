@@ -1,4 +1,5 @@
 import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
+import type { StartupProgress } from './startup';
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -11,6 +12,7 @@ type ShowProgressListener = (
 
 let onChildProcessListener: ShowChildProcressLogListener;
 let onShowProgressListener: ShowProgressListener;
+let onStartupProgressListener: (status: StartupProgress) => void;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAppConfig: () => {
@@ -26,6 +28,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onShowProgress: (callback: ShowProgressListener) => {
     onShowProgressListener = callback;
+  },
+  onStartupProgress: (callback: (status: StartupProgress) => void) => {
+    onStartupProgressListener = callback;
   },
   sendMessageToMain: (message: string, ...args: any[]) => {
     ipcRenderer.send(message, ...args);
@@ -44,6 +49,13 @@ ipcRenderer.on(
     if (onShowProgressListener) {
       onShowProgressListener(title, detail, showAnimation);
     }
+  }
+);
+
+ipcRenderer.on(
+  EventTypeRenderer.ShowStartupProgress,
+  (_event: Electron.IpcRendererEvent, status: StartupProgress) => {
+    onStartupProgressListener?.(status);
   }
 );
 

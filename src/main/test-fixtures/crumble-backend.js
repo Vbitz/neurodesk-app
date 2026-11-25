@@ -30,7 +30,13 @@ const server = http.createServer((req, res) => {
       return;
     }
     if (req.url === '/v1/info') {
-      send({ capabilities: { jupyter_first: true, gpu_acceleration: true } });
+      send({
+        capabilities: {
+          jupyter_first: true,
+          gpu_acceleration: true,
+          glass_focus: mode === 'focus'
+        }
+      });
     } else if (req.url === '/v1/images/pull') {
       state = 'image';
       send({ operation_id: 'one' }, 202);

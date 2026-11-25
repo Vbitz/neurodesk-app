@@ -17,7 +17,8 @@ import {
   DarkThemeBGColor,
   isDarkTheme,
   isSameServerOrigin,
-  LightThemeBGColor
+  LightThemeBGColor,
+  waitForDuration
 } from '../utils';
 import { SessionWindow } from '../sessionwindow/sessionwindow';
 import {
@@ -144,6 +145,7 @@ export class LabView implements IDisposable {
         isMainFrame: boolean
       ) => {
         if (isMainFrame && errorCallback) {
+          this._mainFrameLoadFailed = true;
           errorCallback(errorCode, errorDescription);
         } else {
           console.warn('Failed to load labview', errorDescription);
@@ -285,6 +287,65 @@ export class LabView implements IDisposable {
 
       checkIfReady();
     });
+  }
+
+  async waitForWorkspace(
+    timeout: number
+  ): Promise<'ready' | 'failed' | 'timeout'> {
+    const contents = this._view.webContents;
+    if (this._isDisposed || contents.isDestroyed()) {
+      return 'failed';
+    }
+    const deadline = Date.now() + timeout;
+    // The progress view covers the workspace during startup. Let JupyterLab's
+    // renderer run its layout timers and paint before we remove that overlay.
+    const wasThrottled = contents.backgroundThrottling;
+    contents.setBackgroundThrottling(false);
+    let timeoutHandle: ReturnType<typeof setTimeout>;
+    const expired = new Promise<false>(resolve => {
+      timeoutHandle = setTimeout(() => resolve(false), timeout);
+    });
+    try {
+      while (
+        !this._isDisposed &&
+        !contents.isDestroyed() &&
+        Date.now() < deadline
+      ) {
+        if (this._mainFrameLoadFailed) {
+          return 'failed';
+        }
+        if (!contents.isLoadingMainFrame()) {
+          const visible = contents
+            .executeJavaScript(
+              `
+            (() => {
+              const dock = document.getElementById('jp-main-dock-panel');
+              const visible = element => {
+                if (!element) return false;
+                const { width, height } = element.getBoundingClientRect();
+                return width > 0 && height > 0 && getComputedStyle(element).visibility === 'visible';
+              };
+              const chrome = document.querySelectorAll('.lm-MenuBar-item, .jp-SideBar .lm-TabBar-tab');
+              const workspace = document.querySelectorAll('#jp-main-dock-panel .lm-DockPanel-widget, .jp-FileBrowser .jp-DirListing');
+              return visible(dock) && Array.from(chrome).some(visible) &&
+                (${this._labUIReady} || Array.from(workspace).some(visible));
+            })()
+          `
+            )
+            .catch(() => false);
+          if (await Promise.race([visible, expired])) {
+            return 'ready';
+          }
+        }
+        await waitForDuration(200);
+      }
+      return this._isDisposed || contents.isDestroyed() ? 'failed' : 'timeout';
+    } finally {
+      clearTimeout(timeoutHandle);
+      if (!contents.isDestroyed()) {
+        contents.setBackgroundThrottling(wasThrottled);
+      }
+    }
   }
 
   async dispose(): Promise<void> {
@@ -507,6 +568,7 @@ export class LabView implements IDisposable {
   private _jlabBaseUrl: string;
   private _wsSettings: WorkspaceSettings;
   private _labUIReady = false;
+  private _mainFrameLoadFailed = false;
   private _isDisposed = false;
   private _evm = new EventManager();
 }

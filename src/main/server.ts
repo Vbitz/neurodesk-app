@@ -22,6 +22,7 @@ import {
 } from './config/settings';
 import { createHash, randomBytes } from 'crypto';
 import { ProgressView } from './progressview/progressview';
+import { imageProgress } from './progressview/startup';
 import {
   ContainerConfigParser,
   PlatformType,
@@ -613,9 +614,7 @@ export class JupyterServer {
       );
     }
     this._info.engine = EngineType.CrumbleCracker;
-    if (!this._info.containerConfigName) {
-      throw new Error('containerConfigName is required to launch a session');
-    }
+    this._info.containerConfigName ||= 'neurodesk';
     const config = new ContainerConfigParser(
       path.join(__dirname, 'config/baseContainerConfig.yml'),
       path.join(
@@ -657,9 +656,17 @@ export class JupyterServer {
     fs.mkdirSync(cache, { recursive: true });
     this._crumble = new CrumbleCracker({ binary, cache });
     this._info.port = port || this._options.port || (await getFreePort());
+    this._progressView?.setStartupProgress(imageProgress('resolving'));
     const result = await this._crumble.start(
       {
-        image: process.env.NEURODESK_CC_IMAGE || config.getImageName(),
+        image:
+          process.env.NEURODESK_CC_IMAGE ||
+          (process.platform === 'win32' &&
+          this._info.containerConfigName === 'neurodesk' &&
+          (!this._info.imageVersion ||
+            this._info.imageVersion === config.getDefaultImageVersion())
+            ? 'ghcr.io/tinyrange/neurodesktop-glass:latest-estargz'
+            : config.getImageName()),
         name,
         port: this._info.port,
         storage:
@@ -671,12 +678,11 @@ export class JupyterServer {
         directory: this._info.serverArgs
           ? resolveWorkingDirectory(this._info.serverArgs)
           : '',
-        gpu: userSettings.getValue(SettingType.gpuAcceleration),
+        gpu: userSettings.getGPUAccelerationPreference(),
         cvmfs: process.env.NEURODESK_CC_CVMFS !== '0',
         env: this._info.serverEnvVars
       },
-      phase =>
-        this._progressView?.setChildProcessLog(`CrumbleCracker: ${phase}\n`)
+      status => this._progressView?.setStartupProgress(status)
     );
     this._info.token = result.token;
     this._info.url = new URL(result.url);

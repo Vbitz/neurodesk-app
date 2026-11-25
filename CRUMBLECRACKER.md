@@ -10,11 +10,11 @@ the native Glass window in the same VM. Closing Glass leaves Jupyter running.
 Closing the app requests graceful shutdown of its own backend child; it never
 kills other VM processes by name.
 
-**GPU-accelerated native desktop** is opt-in and applied to the next session.
-The windowless accelerated path currently requires Apple Silicon. It uses the
-guest virtio/virgl driver and host OpenGL renderer, not nested scientific GPU
-containers. Unsupported configurations fail; acceptance requires virgl, not
-silent llvmpipe fallback.
+**GPU-accelerated native desktop** applies to the next session. With no saved
+preference the backend selects acceleration when a compatible hardware renderer
+is available on Apple Silicon, Linux x64, or Windows x64. Clear the checkbox to
+request software rendering. On Windows the default Neurodesk configuration uses
+the GPU-capable Neurodesktop Glass image, including its allowlisted containers.
 
 ## Development
 
@@ -29,10 +29,11 @@ Without an override, the app selects its configured Neurodesktop image version;
 older images lacking that service are incompatible with Jupyter-first startup.
 `NEURODESK_CC_CVMFS=0` disables host CVMFS for isolated tests.
 
-Caches and persistent homes live under the app profile's
-`crumblecracker/workspace-<directory-hash>`. Storage and the additional folder
-remain host-owned shares. Custom shell launch arguments are unsupported for this
-API backend. Backend credentials never enter renderer IPC. Jupyter uses its own
+Caches live under the app profile's `crumblecracker/workspace-<directory-hash>`.
+Windows uses an ephemeral guest home. Linux and macOS store persistent guest
+homes under the profile. The host storage and additional folder retain files
+across sessions on all platforms. This backend uses the app's managed server
+arguments. Backend credentials stay in the main process. Jupyter uses its own
 private generated token; authentication and XSRF protections remain enabled.
 
 ## Native acceptance
@@ -50,6 +51,10 @@ checks the guest renderer, and retains `jupyter.png`, `desktop.png`, and
 `report.json`. Arbitrary guest/application output is not persisted because it can
 contain credentials. It shuts down only its own child. Unit tests and builds
 alone do not establish native UI or GPU acceptance.
+
+Pass an explicit registry reference instead of an archive to exercise a
+published image with host-managed CVMFS. Set `NEURODESK_CC_CVMFS=1` to enable it
+for a local archive.
 
 ## Packaging
 

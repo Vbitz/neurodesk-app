@@ -49,5 +49,5 @@ export function getDefaultStorageDirectory(
   homeDir: string = os.homedir()
 ): string {
   const name = validateStorageMount(mountName);
-  return platform === 'win32' ? `C:/${name}` : path.join(homeDir, name);
+  return platform === 'win32' ? `C:/${name}` : path.posix.join(homeDir, name);
 }

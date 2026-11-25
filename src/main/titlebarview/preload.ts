@@ -12,6 +12,12 @@ let onShowServerStatusListener: ShowServerStatusListener;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openNativeDesktop: () => ipcRenderer.send(EventTypeMain.OpenNativeDesktop),
+  onNativeDesktopStarting: (callback: (starting: boolean) => void) => {
+    ipcRenderer.on(
+      EventTypeRenderer.NativeDesktopStarting,
+      (_event, starting) => callback(starting)
+    );
+  },
   getAppConfig: () => {
     return {
       platform: process.platform

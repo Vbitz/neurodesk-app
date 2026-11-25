@@ -212,7 +212,7 @@ export class SettingsDialog {
                 </jp-radio-group>
 
               <jp-checkbox id="gpu-acceleration" <%= gpuAcceleration ? 'checked' : '' %>>
-                GPU-accelerated native desktop (CrumbleCracker, Apple Silicon; next session)
+                GPU-accelerated native desktop (CrumbleCracker, when available; next session)
               </jp-checkbox>
               <jp-radio-group orientation="horizontal">
                 <label slot="label">On startup</label>

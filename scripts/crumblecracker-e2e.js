@@ -1,10 +1,17 @@
-// Native acceptance entry point. No published image fallback and no user profile.
+// Native acceptance entry point with an explicit image and isolated profile.
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const image = process.argv[2];
-if (!image || !path.isAbsolute(image) || !fs.statSync(image).isFile()) {
-  throw new Error('Pass an absolute local candidate Docker archive path');
+const archive = image && path.isAbsolute(image);
+if (
+  !image ||
+  (archive && !fs.statSync(image).isFile()) ||
+  (!archive && !/^[^\s:/]+(?:\.[^\s:/]+)+\/[^\s]+$/.test(image))
+) {
+  throw new Error(
+    'Pass an absolute Docker archive path or a registry image reference'
+  );
 }
 const root = path.resolve(__dirname, '..');
 const gpu = process.argv[3] !== 'software';
@@ -26,8 +33,8 @@ if (fs.existsSync(path.join(run, 'report.json'))) {
 }
 const env = {
   ...process.env,
-  NEURODESK_CC_IMAGE: 'docker-archive:' + image,
-  NEURODESK_CC_CVMFS: '0',
+  NEURODESK_CC_IMAGE: archive ? 'docker-archive:' + image : image,
+  NEURODESK_CC_CVMFS: process.env.NEURODESK_CC_CVMFS || (archive ? '0' : '1'),
   NEURODESK_ACCEPTANCE_DIR: run,
   NEURODESK_ACCEPTANCE_GPU: gpu ? '1' : '0'
 };

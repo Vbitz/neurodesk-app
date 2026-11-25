@@ -146,7 +146,11 @@ export class UserSettings {
       }),
       serverEnvVars: new Setting<KeyValueMap>({}, { wsOverridable: true }),
       engineType: new Setting<EngineType>(EngineType.Docker),
-      gpuAcceleration: new Setting<boolean>(false),
+      gpuAcceleration: new Setting<boolean>(
+        (process.platform === 'darwin' && process.arch === 'arm64') ||
+          ((process.platform === 'linux' || process.platform === 'win32') &&
+            process.arch === 'x64')
+      ),
       startupMode: new Setting<StartupMode>(StartupMode.WelcomePage),
       cvmfsMode: new Setting<CvmfsMode>(CvmfsMode.Stream),
       ctrlWBehavior: new Setting<CtrlWBehavior>(CtrlWBehavior.CloseTab),
@@ -163,6 +167,11 @@ export class UserSettings {
 
   getValue(setting: SettingType) {
     return this._settings[setting].value;
+  }
+
+  getGPUAccelerationPreference(): boolean | undefined {
+    const setting = this._settings[SettingType.gpuAcceleration];
+    return setting.valueSet ? setting.value : undefined;
   }
 
   setValue(setting: SettingType, value: any) {
@@ -194,7 +203,10 @@ export class UserSettings {
 
     for (let key in SettingType) {
       const setting = this._settings[key];
-      if (setting.differentThanDefault) {
+      if (
+        setting.differentThanDefault ||
+        (key === SettingType.gpuAcceleration && setting.valueSet)
+      ) {
         userSettings[key] = setting.value;
       }
     }
