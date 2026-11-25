@@ -1,4 +1,4 @@
-export interface TransferProgress {
+export interface ITransferProgress {
   completed_bytes: number;
   total_bytes: number | null;
   rate_bytes_per_second: number | null;
@@ -7,7 +7,7 @@ export interface TransferProgress {
   artifacts: { artifact_id: string; state: string }[];
 }
 
-export interface StartupProgress {
+export interface IStartupProgress {
   step: 'image' | 'vm' | 'jupyter';
   title: string;
   detail: string;
@@ -21,11 +21,11 @@ export interface StartupProgress {
 
 export function imageProgress(
   phase: string,
-  progress?: TransferProgress
-): StartupProgress {
+  progress?: ITransferProgress
+): IStartupProgress {
   const download = phase === 'downloading';
   const preparing = phase === 'preparing';
-  const result: StartupProgress = {
+  const result: IStartupProgress = {
     step: 'image',
     title: download
       ? 'Downloading Neurodesktop'
@@ -90,7 +90,7 @@ export function imageProgress(
   return result;
 }
 
-export function vmProgress(phase: string): StartupProgress {
+export function vmProgress(phase: string): IStartupProgress {
   switch (phase) {
     case 'preparing_storage':
       return {
@@ -125,7 +125,7 @@ export function vmProgress(phase: string): StartupProgress {
   }
 }
 
-export const loadingJupyter: StartupProgress = {
+export const loadingJupyter: IStartupProgress = {
   step: 'jupyter',
   title: 'Opening JupyterLab',
   detail: 'Waiting for the workspace to appear.'

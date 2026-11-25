@@ -3,8 +3,8 @@ import { randomBytes } from 'crypto';
 import { request } from 'http';
 import {
   imageProgress,
-  StartupProgress,
-  TransferProgress,
+  IStartupProgress,
+  ITransferProgress,
   vmProgress
 } from './progressview/startup';
 
@@ -36,7 +36,7 @@ interface IReady {
 
 interface IOperationProgress {
   phase: string;
-  progress?: TransferProgress;
+  progress?: ITransferProgress;
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const uuid = () => {
@@ -241,7 +241,7 @@ export class CrumbleCracker {
 
   async start(
     options: ICrumbleStart,
-    progress: (status: StartupProgress) => void = () => undefined
+    progress: (status: IStartupProgress) => void = () => undefined
   ) {
     try {
       const info = await this.api('/v1/info');

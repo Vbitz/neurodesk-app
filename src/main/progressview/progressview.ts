@@ -6,7 +6,7 @@ import * as ejs from 'ejs';
 import * as fs from 'fs';
 import { ThemedView } from '../dialog/themedview';
 import { EventTypeRenderer } from '../eventtypes';
-import type { StartupProgress } from './startup';
+import type { IStartupProgress } from './startup';
 
 export class ProgressView {
   constructor(options: ProgressView.IOptions) {
@@ -363,7 +363,7 @@ export class ProgressView {
     });
   }
 
-  setStartupProgress(status: StartupProgress) {
+  setStartupProgress(status: IStartupProgress) {
     this._viewReady.then(() => {
       const contents = this._view.view.webContents;
       if (!contents.isDestroyed()) {
